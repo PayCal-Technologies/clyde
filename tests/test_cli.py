@@ -68,6 +68,48 @@ def test_bundle_writes_manifest_and_review_prompt(tmp_path, capsys) -> None:
     assert "Review manifest.json before running sync." in output
 
 
+def test_bundle_subject_prints_and_records_book_plan(tmp_path, capsys) -> None:
+    (tmp_path / "app.py").write_text("print('safe')\n")
+    out_dir = tmp_path / "out"
+
+    status = main(["bundle", str(tmp_path), "--out", str(out_dir), "--subject", "Demo Sync"])
+
+    output = capsys.readouterr().out
+    manifest = json.loads((out_dir / "manifest.json").read_text())
+    assert status == 0
+    assert "Book title:" in output
+    assert manifest["book"]["title"].endswith(" - Demo Sync")
+
+
+def test_book_command_prints_dated_name(capsys) -> None:
+    status = main(["book", "Demo", "Sync"])
+
+    output = capsys.readouterr().out
+    assert status == 0
+    assert "Book title:" in output
+    assert " - Demo Sync" in output
+
+
+def test_bundle_can_use_exact_book_title(tmp_path) -> None:
+    (tmp_path / "app.py").write_text("print('safe')\n")
+    out_dir = tmp_path / "out"
+
+    status = main(
+        [
+            "bundle",
+            str(tmp_path),
+            "--out",
+            str(out_dir),
+            "--book-title",
+            "2026-07-21 1030 - Demo Sync",
+        ]
+    )
+
+    manifest = json.loads((out_dir / "manifest.json").read_text())
+    assert status == 0
+    assert manifest["book"]["title"] == "2026-07-21 1030 - Demo Sync"
+
+
 def test_scan_options_require_positive_numbers(tmp_path, capsys) -> None:
     with pytest.raises(SystemExit) as excinfo:
         main(["preview", str(tmp_path), "--max-file-bytes", "0"])

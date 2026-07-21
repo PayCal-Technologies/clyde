@@ -20,6 +20,7 @@ def _write_mcp_server(
     tools: list[str],
     fail_call: bool = False,
     call_delay: float = 0.0,
+    record_calls: bool = False,
 ) -> None:
     path.write_text(
         f"""
@@ -50,6 +51,8 @@ def send(message):
 TOOLS = {tools!r}
 FAIL_CALL = {fail_call!r}
 CALL_DELAY = {call_delay!r}
+RECORD_CALLS = {record_calls!r}
+CALLS_PATH = {str(path.with_suffix(".calls.jsonl"))!r}
 
 
 while True:
@@ -63,6 +66,9 @@ while True:
         if CALL_DELAY:
             import time
             time.sleep(CALL_DELAY)
+        if RECORD_CALLS:
+            with open(CALLS_PATH, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message["params"]["arguments"]) + "\\n")
         if FAIL_CALL:
             send({{"jsonrpc": "2.0", "id": message["id"], "error": {{"code": -32000, "message": "upload rejected"}}}})
         else:
@@ -112,6 +118,52 @@ def test_sync_chunks_emits_progress_events(tmp_path) -> None:
     ]
     assert progress.events[-1].job_id == "job-1"
     assert progress.events[-1].done == 2
+
+
+def test_sync_chunks_applies_source_title_prefix(tmp_path) -> None:
+    server = tmp_path / "server.py"
+    _write_mcp_server(server, tools=["add_source"], record_calls=True)
+    chunks = [ChunkRecord(rel_path="a.py", sha256="abc", index=1, total=1, text="Path: a.py\n")]
+
+    assert (
+        sync_chunks(
+            chunks,
+            notebook_id="nb",
+            command=[sys.executable, str(server)],
+            title_prefix="2026-07-21 1435 - Demo :: ",
+        )
+        == 1
+    )
+
+    assert "2026-07-21 1435 - Demo :: a.py [1/1]" in (
+        server.with_suffix(".calls.jsonl").read_text()
+    )
+
+
+def test_sync_chunks_can_target_notebook_url(tmp_path) -> None:
+    server = tmp_path / "server.py"
+    _write_mcp_server(server, tools=["add_source"], record_calls=True)
+    chunks = [ChunkRecord(rel_path="a.py", sha256="abc", index=1, total=1, text="Path: a.py\n")]
+
+    assert (
+        sync_chunks(
+            chunks,
+            notebook_url="https://notebooklm.google.com/notebook/example",
+            command=[sys.executable, str(server)],
+        )
+        == 1
+    )
+
+    assert '"notebook_url": "https://notebooklm.google.com/notebook/example"' in (
+        server.with_suffix(".calls.jsonl").read_text()
+    )
+
+
+def test_sync_chunks_requires_notebook_target() -> None:
+    chunks = [ChunkRecord(rel_path="a.py", sha256="abc", index=1, total=1, text="Path: a.py\n")]
+
+    with pytest.raises(ValueError, match="notebook_id or notebook_url"):
+        sync_chunks(chunks)
 
 
 def test_sync_chunks_emits_heartbeat_during_slow_upload(tmp_path) -> None:

@@ -8,6 +8,7 @@ import time
 from collections import Counter
 from pathlib import Path
 
+from .book import BookPlan
 from .bundler import make_chunks, write_bundle
 from .daemon import DEFAULT_HOST, DEFAULT_PORT, rpc, serve, status_url
 from .notebooklm import sync_chunks
@@ -49,6 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     bundle = subparsers.add_parser("bundle", help="write manifest.json and chunks.jsonl")
     add_scan_args(bundle)
+    add_book_args(bundle)
     bundle.add_argument(
         "--out",
         type=Path,
@@ -60,7 +62,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     sync = subparsers.add_parser("sync", help="upload chunks to NotebookLM through MCP stdio")
     add_scan_args(sync)
-    sync.add_argument("--notebook-id", required=True)
+    add_book_args(sync)
+    target = sync.add_mutually_exclusive_group(required=True)
+    target.add_argument("--notebook-id")
+    target.add_argument("--notebook-url")
     sync.add_argument("--approve-upload", action="store_true")
     sync.add_argument("--mcp-command", default="npx -y notebooklm-mcp@2.0.0")
     sync.add_argument(
@@ -107,6 +112,10 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--watch", action="store_true", help="poll status until the job finishes")
     status.add_argument("--interval", type=_positive_float, default=1.0)
     status.set_defaults(func=cmd_status)
+
+    book = subparsers.add_parser("book", help="print Clyde's dated NotebookLM book name")
+    book.add_argument("subject", nargs="+", help="subject words for the notebook title")
+    book.set_defaults(func=cmd_book)
     return parser
 
 
@@ -144,6 +153,20 @@ def add_scan_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_book_args(parser: argparse.ArgumentParser) -> None:
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--subject",
+        metavar="TEXT",
+        help="generate a dated NotebookLM book title for this subject",
+    )
+    group.add_argument(
+        "--book-title",
+        metavar="TEXT",
+        help="use an exact NotebookLM book title created earlier",
+    )
+
+
 def cmd_preview(args: argparse.Namespace) -> int:
     result = scan_repo(
         args.repo,
@@ -171,6 +194,7 @@ def cmd_preview(args: argparse.Namespace) -> int:
 
 
 def cmd_bundle(args: argparse.Namespace) -> int:
+    plan = _book_plan(args)
     result = scan_repo(
         args.repo,
         include=args.include,
@@ -179,8 +203,16 @@ def cmd_bundle(args: argparse.Namespace) -> int:
     )
     if args.out.exists() and not args.out.is_dir():
         raise ValueError(f"--out must be a directory, not a file: {args.out}")
-    manifest = write_bundle(result, args.out, max_chunk_chars=args.max_chunk_chars)
+    manifest = write_bundle(
+        result,
+        args.out,
+        max_chunk_chars=args.max_chunk_chars,
+        book_title=plan.title if plan else None,
+        book_slug=plan.slug if plan else None,
+    )
     _print_summary(result, manifest["chunk_count"], args)
+    if plan:
+        _print_book_plan(plan)
     print(f"\nWrote: {args.out / 'manifest.json'}")
     print(f"Wrote: {args.out / 'chunks.jsonl'}")
     print("Review manifest.json before running sync.")
@@ -190,25 +222,35 @@ def cmd_bundle(args: argparse.Namespace) -> int:
 def cmd_sync(args: argparse.Namespace) -> int:
     if not args.approve_upload:
         raise ValueError("sync requires --approve-upload")
+    plan = _book_plan(args)
     result = scan_repo(
         args.repo,
         include=args.include,
         exclude=args.exclude,
         max_file_bytes=args.max_file_bytes,
     )
-    chunks = make_chunks(result, max_chunk_chars=args.max_chunk_chars)
+    chunks = make_chunks(
+        result,
+        max_chunk_chars=args.max_chunk_chars,
+        book_title=plan.title if plan else None,
+    )
     _print_summary(result, len(chunks), args)
+    if plan:
+        _print_book_plan(plan)
     command = shlex.split(args.mcp_command)
     count = sync_chunks(
         chunks,
         notebook_id=args.notebook_id,
+        notebook_url=args.notebook_url,
         command=command,
         request_timeout=args.mcp_timeout,
         heartbeat_interval=args.heartbeat_interval,
         progress=_progress_sink(args),
         job_id=args.job_id,
+        title_prefix=plan.source_prefix if plan else "",
     )
-    print(f"\nUploaded {count} chunks to notebook {args.notebook_id}.")
+    target = args.notebook_id or args.notebook_url
+    print(f"\nUploaded {count} chunks to notebook {target}.")
     return 0
 
 
@@ -232,6 +274,25 @@ def cmd_status(args: argparse.Namespace) -> int:
         if not args.watch or _is_terminal_status(result):
             return 0
         time.sleep(args.interval)
+
+
+def cmd_book(args: argparse.Namespace) -> int:
+    plan = BookPlan.create(" ".join(args.subject))
+    _print_book_plan(plan)
+    return 0
+
+
+def _book_plan(args: argparse.Namespace) -> BookPlan | None:
+    subject = getattr(args, "subject", None)
+    book_title = getattr(args, "book_title", None)
+    if book_title:
+        return BookPlan.from_title(book_title)
+    return BookPlan.create(subject) if subject else None
+
+
+def _print_book_plan(plan: BookPlan) -> None:
+    print(f"Book title: {plan.title}")
+    print(f"Book slug: {plan.slug}")
 
 
 def _progress_sink(args: argparse.Namespace):

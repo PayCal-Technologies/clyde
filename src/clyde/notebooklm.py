@@ -28,14 +28,18 @@ T = TypeVar("T")
 def sync_chunks(
     chunks: Iterable[ChunkRecord],
     *,
-    notebook_id: str,
+    notebook_id: str | None = None,
+    notebook_url: str | None = None,
     command: list[str] | None = None,
     env: dict[str, str] | None = None,
     request_timeout: float = 120.0,
     heartbeat_interval: float = 1.0,
     progress: ProgressSink | None = None,
     job_id: str = "sync",
+    title_prefix: str = "",
 ) -> int:
+    if not notebook_id and not notebook_url:
+        raise ValueError("sync requires notebook_id or notebook_url")
     count = 0
     items = list(chunks)
     total = len(items)
@@ -100,7 +104,7 @@ def sync_chunks(
                 )
                 raise NotebookLMSyncError(message)
             for chunk in items:
-                title = f"{chunk.rel_path} [{chunk.index}/{chunk.total}]"
+                title = f"{title_prefix}{chunk.rel_path} [{chunk.index}/{chunk.total}]"
                 sink.emit(
                     ProgressEvent(
                         job_id=job_id,
@@ -116,10 +120,11 @@ def sync_chunks(
                         lambda: client.call_tool(
                             "add_source",
                             {
-                                "notebook_id": notebook_id,
                                 "type": "text",
                                 "title": title,
                                 "content": chunk.text,
+                                **({"notebook_id": notebook_id} if notebook_id else {}),
+                                **({"notebook_url": notebook_url} if notebook_url else {}),
                             },
                         ),
                         sink=sink,

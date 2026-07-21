@@ -7,19 +7,28 @@ from pathlib import Path
 from .models import ChunkRecord, ScanResult
 
 
-def make_chunks(result: ScanResult, *, max_chunk_chars: int = 18_000) -> list[ChunkRecord]:
+def make_chunks(
+    result: ScanResult,
+    *,
+    max_chunk_chars: int = 18_000,
+    book_title: str | None = None,
+) -> list[ChunkRecord]:
     chunks: list[ChunkRecord] = []
     for file in result.files:
         pieces = _split_text(file.text, max_chunk_chars)
         total = len(pieces)
         for index, piece in enumerate(pieces, start=1):
-            payload = (
-                f"Repository: {result.repo.name}\n"
-                f"Path: {file.rel_path}\n"
-                f"SHA-256: {file.sha256}\n"
-                f"Chunk: {index}/{total}\n\n"
-                f"{piece}"
+            header = [f"Repository: {result.repo.name}"]
+            if book_title:
+                header.append(f"Book: {book_title}")
+            header.extend(
+                [
+                    f"Path: {file.rel_path}",
+                    f"SHA-256: {file.sha256}",
+                    f"Chunk: {index}/{total}",
+                ]
             )
+            payload = "\n".join(header) + f"\n\n{piece}"
             chunks.append(
                 ChunkRecord(
                     rel_path=file.rel_path,
@@ -32,9 +41,16 @@ def make_chunks(result: ScanResult, *, max_chunk_chars: int = 18_000) -> list[Ch
     return chunks
 
 
-def write_bundle(result: ScanResult, out_dir: Path, *, max_chunk_chars: int = 18_000) -> dict:
+def write_bundle(
+    result: ScanResult,
+    out_dir: Path,
+    *,
+    max_chunk_chars: int = 18_000,
+    book_title: str | None = None,
+    book_slug: str | None = None,
+) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
-    chunks = make_chunks(result, max_chunk_chars=max_chunk_chars)
+    chunks = make_chunks(result, max_chunk_chars=max_chunk_chars, book_title=book_title)
 
     manifest = {
         "schema": "clyde.bundle.v1",
@@ -44,6 +60,11 @@ def write_bundle(result: ScanResult, out_dir: Path, *, max_chunk_chars: int = 18
         "file_count": len(result.files),
         "chunk_count": len(chunks),
         "total_bytes": result.total_bytes,
+        "book": (
+            {"title": book_title, "slug": book_slug}
+            if book_title or book_slug
+            else None
+        ),
         "files": [
             {"path": item.rel_path, "size": item.size, "sha256": item.sha256}
             for item in result.files

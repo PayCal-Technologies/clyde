@@ -54,6 +54,29 @@ clyde sync /path/to/repo \
   --approve-upload
 ```
 
+Plan a dated NotebookLM book name:
+
+```bash
+clyde book "Clyde self feedback"
+```
+
+This prints a title like:
+
+```text
+Book title: 2026-07-21 1030 - Clyde self feedback
+Book slug: 20260721-1030-clyde-self-feedback
+```
+
+Create the Google-side NotebookLM notebook yourself with that title, then sync
+to either its registered id or its direct URL:
+
+```bash
+clyde sync /path/to/repo \
+  --notebook-url "https://notebooklm.google.com/notebook/..." \
+  --book-title "2026-07-21 1030 - Clyde self feedback" \
+  --approve-upload
+```
+
 By default `sync` runs:
 
 ```bash
@@ -82,6 +105,13 @@ chunks. Upload errors report the repository path and chunk ordinal that failed.
 By default, `sync` prints flushed real-time progress lines to stderr for MCP
 startup, tool checks, each chunk upload, failures, and completion. Use
 `--quiet-progress` to suppress those lines.
+
+When `--subject` is supplied, Clyde generates a date/hour/minute book plan and
+prefixes every uploaded source title with that book title. When you already
+created the Google-side notebook from `clyde book`, pass the exact printed title
+back as `--book-title` so the minute cannot drift. The same book metadata is
+recorded in `bundle` manifests. Clyde does not delete or create Google-side
+notebooks; use the printed title for the notebook you manage in NotebookLM.
 
 Run a local status daemon:
 
@@ -184,6 +214,10 @@ All commands accept:
 
 `sync` also accepts:
 
+- `--notebook-id ID`: upload to a notebook registered in the local MCP library.
+- `--notebook-url URL`: upload directly to a Google NotebookLM notebook URL.
+- `--subject TEXT`: generate a dated book title and source-title prefix.
+- `--book-title TEXT`: reuse an exact title from `clyde book`.
 - `--mcp-timeout SECONDS`: wait longer for slow NotebookLM browser automation.
 - `--heartbeat-interval SECONDS`: emit progress while an MCP request is still
   in flight. Defaults to `1`.
