@@ -1,0 +1,633 @@
+package clyde
+
+import (
+	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+func Main(args []string, stdout, stderr io.Writer) int {
+	return MainWithInput(args, os.Stdin, stdout, stderr)
+}
+
+func MainWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		if file, ok := stdin.(*os.File); ok {
+			if stat, err := file.Stat(); err == nil && (stat.Mode()&os.ModeCharDevice) != 0 {
+				if err := RunTUI(stdin, stdout, stderr); err != nil {
+					fmt.Fprintf(stderr, "clyde: error: %v\n", err)
+					return 1
+				}
+				return 0
+			}
+		}
+		printHelp(stdout)
+		return 0
+	}
+	if args[0] == "-h" || args[0] == "--help" {
+		printHelp(stdout)
+		return 0
+	}
+	if err := run(args, stdin, stdout, stderr); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		fmt.Fprintf(stderr, "clyde: error: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	switch args[0] {
+	case "tui":
+		return RunTUI(stdin, stdout, stderr)
+	case "preview":
+		return cmdPreview(args[1:], stdout)
+	case "bundle":
+		return cmdBundle(args[1:], stdout)
+	case "sync":
+		return cmdSync(args[1:], stdout, stderr)
+	case "daemon":
+		return cmdDaemon(args[1:], stdout)
+	case "status":
+		return cmdStatus(args[1:], stdout)
+	case "book":
+		return cmdBook(args[1:], stdout)
+	case "models":
+		return cmdModels(args[1:], stdout)
+	case "ask":
+		return cmdAsk(args[1:], stdin, stdout)
+	case "agent":
+		return cmdAgent(args[1:], stdin, stdout)
+	default:
+		return errf("unknown command: %s", args[0])
+	}
+}
+
+type scanFlags struct {
+	include       multiFlag
+	exclude       multiFlag
+	maxFileBytes  int64
+	maxChunkChars int
+}
+
+func addScanFlags(fs *flag.FlagSet, flags *scanFlags) {
+	fs.Var(&flags.include, "include", "only include paths matching this glob; repeatable")
+	fs.Var(&flags.exclude, "exclude", "skip paths matching this glob in addition to Clyde defaults; repeatable")
+	fs.Int64Var(&flags.maxFileBytes, "max-file-bytes", 250000, "skip files larger than this many bytes")
+	fs.IntVar(&flags.maxChunkChars, "max-chunk-chars", 18000, "split uploaded source text at this many characters")
+}
+
+func cmdPreview(args []string, out io.Writer) error {
+	flags := scanFlags{}
+	fs := flag.NewFlagSet("preview", flag.ContinueOnError)
+	fs.SetOutput(out)
+	showFiles := fs.Int("show-files", 20, "show first N included files")
+	showSkips := fs.Int("show-skips", 50, "show first N skipped files")
+	addScanFlags(fs, &flags)
+	if err := fs.Parse(interspersedArgs(args, map[string]bool{})); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errf("preview requires REPO")
+	}
+	if err := validateScanFlags(flags); err != nil {
+		return err
+	}
+	result, chunks, err := scanAndChunk(fs.Arg(0), flags, "")
+	if err != nil {
+		return err
+	}
+	printSummary(out, result, len(chunks), flags)
+	if len(result.Files) > 0 && *showFiles > 0 {
+		fmt.Fprintf(out, "\nIncluded files (first %d):\n", min(*showFiles, len(result.Files)))
+		for _, file := range result.Files[:min(*showFiles, len(result.Files))] {
+			fmt.Fprintf(out, "  %s (%s)\n", file.Rel, formatBytes(file.Size))
+		}
+		if len(result.Files) > *showFiles {
+			fmt.Fprintf(out, "  ... %d more\n", len(result.Files)-*showFiles)
+		}
+	}
+	if len(result.Skips) > 0 && *showSkips > 0 {
+		fmt.Fprintln(out, "\nSkipped:")
+		for _, skip := range result.Skips[:min(*showSkips, len(result.Skips))] {
+			fmt.Fprintf(out, "  %s: %s\n", skip.Path, skip.Reason)
+		}
+		if len(result.Skips) > *showSkips {
+			fmt.Fprintf(out, "  ... %d more\n", len(result.Skips)-*showSkips)
+		}
+	}
+	if len(result.Files) == 0 {
+		fmt.Fprintln(out, "\nNo files matched. Check --include/--exclude or the repo path.")
+	}
+	return nil
+}
+
+func cmdBundle(args []string, out io.Writer) error {
+	flags := scanFlags{}
+	fs := flag.NewFlagSet("bundle", flag.ContinueOnError)
+	fs.SetOutput(out)
+	outDir := fs.String("out", ".clyde/out", "directory for manifest.json and chunks.jsonl")
+	subject := fs.String("subject", "", "generate a dated NotebookLM book title")
+	bookTitle := fs.String("book-title", "", "use an exact NotebookLM book title")
+	addScanFlags(fs, &flags)
+	if err := fs.Parse(interspersedArgs(args, map[string]bool{})); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errf("bundle requires REPO")
+	}
+	if *subject != "" && *bookTitle != "" {
+		return errf("--subject and --book-title are mutually exclusive")
+	}
+	if err := validateScanFlags(flags); err != nil {
+		return err
+	}
+	var plan *BookPlan
+	if *subject != "" || *bookTitle != "" {
+		p, err := planFromArgs(*subject, *bookTitle)
+		if err != nil {
+			return err
+		}
+		plan = &p
+	}
+	info, err := os.Stat(*outDir)
+	if err == nil && !info.IsDir() {
+		return errf("--out must be a directory, not a file: %s", *outDir)
+	}
+	result, err := ScanRepo(fs.Arg(0), flags.include, flags.exclude, flags.maxFileBytes)
+	if err != nil {
+		return err
+	}
+	title, slug := "", ""
+	if plan != nil {
+		title, slug = plan.Title(), plan.Slug()
+	}
+	manifest, err := WriteBundle(result, *outDir, flags.maxChunkChars, title, slug)
+	if err != nil {
+		return err
+	}
+	printSummary(out, result, manifest.ChunkCount, flags)
+	if plan != nil {
+		printBookPlan(out, *plan)
+	}
+	fmt.Fprintf(out, "\nWrote: %s\n", filepath.Join(*outDir, "manifest.json"))
+	fmt.Fprintf(out, "Wrote: %s\n", filepath.Join(*outDir, "chunks.jsonl"))
+	fmt.Fprintln(out, "Review manifest.json before running sync.")
+	return nil
+}
+
+func cmdSync(args []string, out, errOut io.Writer) error {
+	flags := scanFlags{}
+	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
+	fs.SetOutput(out)
+	notebookID := fs.String("notebook-id", "", "NotebookLM notebook id")
+	notebookURL := fs.String("notebook-url", "", "NotebookLM notebook URL")
+	approve := fs.Bool("approve-upload", false, "approve upload")
+	backend := fs.String("backend", "mcp", "NotebookLM backend: mcp or nlm")
+	mcpCommand := fs.String("mcp-command", "npx -y notebooklm-mcp@2.0.0", "command used for MCP backend")
+	nlmCommand := fs.String("nlm-command", "nlm", "command used for nlm backend")
+	deleteExisting := fs.Bool("delete-existing-sources", false, "with --backend nlm, delete all existing notebook sources before upload")
+	timeout := fs.Float64("mcp-timeout", 120, "seconds to wait for each backend response")
+	statusURL := fs.String("status-url", "", "optional Clyde daemon JSON-RPC URL")
+	quiet := fs.Bool("quiet-progress", false, "suppress real-time progress lines")
+	jobID := fs.String("job-id", "sync", "status daemon job id")
+	subject := fs.String("subject", "", "generate a dated NotebookLM book title")
+	bookTitle := fs.String("book-title", "", "use an exact NotebookLM book title")
+	fs.Float64("heartbeat-interval", 1, "accepted for compatibility; progress events emit per phase")
+	addScanFlags(fs, &flags)
+	boolFlags := map[string]bool{
+		"approve-upload":          true,
+		"delete-existing-sources": true,
+		"quiet-progress":          true,
+	}
+	if err := fs.Parse(interspersedArgs(args, boolFlags)); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errf("sync requires REPO")
+	}
+	if !*approve {
+		return errf("sync requires --approve-upload")
+	}
+	if (*notebookID == "" && *notebookURL == "") || (*notebookID != "" && *notebookURL != "") {
+		return errf("sync requires exactly one of --notebook-id or --notebook-url")
+	}
+	if *deleteExisting && *backend != "nlm" {
+		return errf("--delete-existing-sources requires --backend nlm")
+	}
+	if *backend != "mcp" && *backend != "nlm" {
+		return errf("--backend must be mcp or nlm")
+	}
+	if *subject != "" && *bookTitle != "" {
+		return errf("--subject and --book-title are mutually exclusive")
+	}
+	if err := validateScanFlags(flags); err != nil {
+		return err
+	}
+	var plan *BookPlan
+	if *subject != "" || *bookTitle != "" {
+		p, err := planFromArgs(*subject, *bookTitle)
+		if err != nil {
+			return err
+		}
+		plan = &p
+	}
+	title := ""
+	prefix := ""
+	if plan != nil {
+		title = plan.Title()
+		prefix = plan.SourcePrefix()
+	}
+	result, chunks, err := scanAndChunk(fs.Arg(0), flags, title)
+	if err != nil {
+		return err
+	}
+	printSummary(out, result, len(chunks), flags)
+	if plan != nil {
+		printBookPlan(out, *plan)
+	}
+	var sinks []ProgressSink
+	if !*quiet {
+		sinks = append(sinks, ConsoleSink{Writer: errOut})
+	}
+	if *statusURL != "" {
+		sinks = append(sinks, HTTPSink{URL: *statusURL})
+	}
+	var sink ProgressSink
+	if len(sinks) == 1 {
+		sink = sinks[0]
+	} else if len(sinks) > 1 {
+		sink = TeeSink(sinks)
+	}
+	count, err := SyncChunks(context.Background(), chunks, SyncOptions{
+		NotebookID:            *notebookID,
+		NotebookURL:           *notebookURL,
+		Backend:               *backend,
+		MCPCommand:            shellFields(*mcpCommand),
+		NLMCommand:            shellFields(*nlmCommand),
+		DeleteExistingSources: *deleteExisting,
+		RequestTimeout:        time.Duration(*timeout * float64(time.Second)),
+		Progress:              sink,
+		JobID:                 *jobID,
+		TitlePrefix:           prefix,
+	})
+	if err != nil {
+		return err
+	}
+	target := *notebookID
+	if target == "" {
+		target = *notebookURL
+	}
+	suffix := ""
+	if *backend != "mcp" {
+		suffix = " via " + *backend
+	}
+	fmt.Fprintf(out, "\nUploaded %d chunks to notebook %s%s.\n", count, target, suffix)
+	return nil
+}
+
+func cmdDaemon(args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
+	fs.SetOutput(out)
+	host := fs.String("host", "127.0.0.1", "host")
+	port := fs.Int("port", 5876, "port")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	return ServeStatus(*host, *port, out)
+}
+
+func cmdStatus(args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	fs.SetOutput(out)
+	host := fs.String("host", "127.0.0.1", "host")
+	port := fs.Int("port", 5876, "port")
+	jobID := fs.String("job-id", "", "job id")
+	jsonOut := fs.Bool("json", false, "print raw JSON")
+	watch := fs.Bool("watch", false, "poll until terminal")
+	interval := fs.Float64("interval", 1, "poll interval")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	seen := ""
+	for {
+		result, err := FetchStatus(StatusURL(*host, *port), *jobID)
+		if err != nil {
+			return err
+		}
+		rendered := FormatStatus(result)
+		if *jsonOut {
+			data, _ := json.MarshalIndent(result, "", "  ")
+			rendered = string(data)
+		}
+		if rendered != seen {
+			fmt.Fprintln(out, rendered)
+			seen = rendered
+		}
+		if !*watch || terminalStatus(result) {
+			return nil
+		}
+		time.Sleep(time.Duration(*interval * float64(time.Second)))
+	}
+}
+
+func cmdBook(args []string, out io.Writer) error {
+	if len(args) == 0 {
+		return errf("book requires subject")
+	}
+	plan, err := NewBookPlan(strings.Join(args, " "), time.Now())
+	if err != nil {
+		return err
+	}
+	printBookPlan(out, plan)
+	return nil
+}
+
+func cmdModels(args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("models", flag.ContinueOnError)
+	fs.SetOutput(out)
+	ollamaURL := fs.String("ollama-url", "", "Ollama base URL")
+	timeout := fs.Float64("timeout", 10, "seconds to wait for Ollama")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	client := NewOllamaClient(*ollamaURL, time.Duration(*timeout*float64(time.Second)))
+	models, err := client.ListModels(context.Background())
+	if err != nil {
+		return err
+	}
+	selected, _ := SelectModel("", models)
+	if len(models) == 0 {
+		fmt.Fprintln(out, "No Ollama models found.")
+		return nil
+	}
+	for _, model := range models {
+		marker := " "
+		if model.Name == selected {
+			marker = "*"
+		}
+		fmt.Fprintf(out, "%s %s\t%s\n", marker, model.Name, formatBytes(model.Size))
+	}
+	return nil
+}
+
+func cmdAsk(args []string, stdin io.Reader, out io.Writer) error {
+	fs := flag.NewFlagSet("ask", flag.ContinueOnError)
+	fs.SetOutput(out)
+	model := fs.String("model", "", "Ollama model name")
+	ollamaURL := fs.String("ollama-url", "", "Ollama base URL")
+	timeout := fs.Float64("timeout", 120, "seconds to wait for Ollama")
+	noStream := fs.Bool("no-stream", false, "wait for the full response before printing")
+	promptFile := fs.String("prompt-file", "", "read prompt from file")
+	readStdin := fs.Bool("stdin", false, "read prompt from stdin")
+	if err := fs.Parse(interspersedArgs(args, map[string]bool{"no-stream": true, "stdin": true})); err != nil {
+		return err
+	}
+	prompt, err := promptText(stdin, fs.Args(), *promptFile, *readStdin)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(prompt) == "" {
+		return errf("ask requires a prompt")
+	}
+	client := NewOllamaClient(*ollamaURL, time.Duration(*timeout*float64(time.Second)))
+	models, err := client.ListModels(context.Background())
+	if err != nil {
+		return err
+	}
+	selected, err := SelectModel(*model, models)
+	if err != nil {
+		return err
+	}
+	response, err := client.Generate(context.Background(), selected, prompt, !*noStream, out)
+	if err != nil {
+		return err
+	}
+	if *noStream {
+		fmt.Fprintln(out, response)
+	} else {
+		fmt.Fprintln(out)
+	}
+	return nil
+}
+
+func cmdAgent(args []string, stdin io.Reader, out io.Writer) error {
+	flags := scanFlags{}
+	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
+	fs.SetOutput(out)
+	model := fs.String("model", "", "Ollama model name; defaults to CLYDE_MODEL, qwen2.5-coder:14b, qwen2.5-coder:7b, then first available")
+	ollamaURL := fs.String("ollama-url", "", "Ollama base URL")
+	timeout := fs.Float64("timeout", 180, "seconds to wait for Ollama")
+	maxContext := fs.Int("max-context-chars", 24000, "maximum repository context characters to send to the model")
+	noStream := fs.Bool("no-stream", false, "wait for the full response before printing")
+	promptFile := fs.String("prompt-file", "", "read feedback prompt from file")
+	readStdin := fs.Bool("stdin", false, "read feedback prompt from stdin")
+	allowRemote := fs.Bool("allow-remote-ollama", false, "allow sending scanned source context to a non-local Ollama URL")
+	addScanFlags(fs, &flags)
+	boolFlags := map[string]bool{"no-stream": true, "stdin": true, "allow-remote-ollama": true}
+	if err := fs.Parse(interspersedArgs(args, boolFlags)); err != nil {
+		return err
+	}
+	if fs.NArg() < 1 {
+		return errf("agent requires REPO and optional feedback prompt")
+	}
+	if !*allowRemote && !isLocalOllamaURL(*ollamaURL) {
+		return errf("agent refuses to send scanned source to non-local Ollama URL; use --allow-remote-ollama to override")
+	}
+	if err := validateScanFlags(flags); err != nil {
+		return err
+	}
+	task, err := promptText(stdin, fs.Args()[1:], *promptFile, *readStdin)
+	if err != nil {
+		return err
+	}
+	result, chunks, err := scanAndChunk(fs.Arg(0), flags, "")
+	if err != nil {
+		return err
+	}
+	client := NewOllamaClient(*ollamaURL, time.Duration(*timeout*float64(time.Second)))
+	models, err := client.ListModels(context.Background())
+	if err != nil {
+		return err
+	}
+	selected, err := SelectModel(*model, models)
+	if err != nil {
+		return err
+	}
+	prompt := BuildAgentPrompt(result, chunks, AgentPromptOptions{
+		Task:            task,
+		MaxContextChars: *maxContext,
+	})
+	fmt.Fprintf(out, "Clyde agent using local model: %s\n", selected)
+	fmt.Fprintf(out, "Included files: %d, chunks: %d, prompt chars: %d\n\n", len(result.Files), len(chunks), len(prompt))
+	response, err := client.Generate(context.Background(), selected, prompt, !*noStream, out)
+	if err != nil {
+		return err
+	}
+	if *noStream {
+		fmt.Fprintln(out, response)
+	} else {
+		fmt.Fprintln(out)
+	}
+	return nil
+}
+
+func printHelp(out io.Writer) {
+	fmt.Fprintln(out, "usage: clyde {tui,preview,bundle,sync,daemon,status,book,models,ask,agent} ...")
+	fmt.Fprintln(out, "run clyde with no arguments in a terminal to open the TUI")
+}
+
+func scanAndChunk(repo string, flags scanFlags, bookTitle string) (ScanResult, []ChunkRecord, error) {
+	result, err := ScanRepo(repo, flags.include, flags.exclude, flags.maxFileBytes)
+	if err != nil {
+		return ScanResult{}, nil, err
+	}
+	return result, MakeChunks(result, flags.maxChunkChars, bookTitle), nil
+}
+
+func planFromArgs(subject, bookTitle string) (BookPlan, error) {
+	if bookTitle != "" {
+		return BookPlanFromTitle(bookTitle)
+	}
+	return NewBookPlan(subject, time.Now())
+}
+
+func printBookPlan(out io.Writer, plan BookPlan) {
+	fmt.Fprintf(out, "Book title: %s\n", plan.Title())
+	fmt.Fprintf(out, "Book slug: %s\n", plan.Slug())
+}
+
+func printSummary(out io.Writer, result ScanResult, chunkCount int, flags scanFlags) {
+	fmt.Fprintf(out, "Repo: %s\n", result.Repo)
+	fmt.Fprintf(out, "Included files: %d\n", len(result.Files))
+	fmt.Fprintf(out, "Skipped files: %d\n", len(result.Skips))
+	fmt.Fprintf(out, "Total included bytes: %d (%s)\n", result.TotalBytes(), formatBytes(result.TotalBytes()))
+	fmt.Fprintf(out, "Chunks: %d\n", chunkCount)
+	fmt.Fprintf(out, "Max file size: %d bytes (%s)\n", flags.maxFileBytes, formatBytes(flags.maxFileBytes))
+	fmt.Fprintf(out, "Max chunk size: %d chars\n", flags.maxChunkChars)
+	if len(flags.include) > 0 {
+		fmt.Fprintf(out, "Include globs: %s\n", strings.Join(flags.include, ", "))
+	}
+	if len(flags.exclude) > 0 {
+		fmt.Fprintf(out, "Extra exclude globs: %s\n", strings.Join(flags.exclude, ", "))
+	}
+	if len(result.Skips) > 0 {
+		counts := map[string]int{}
+		for _, skip := range result.Skips {
+			counts[skip.Reason]++
+		}
+		fmt.Fprintln(out, "Skip reasons:")
+		for reason, count := range counts {
+			fmt.Fprintf(out, "  %s: %d\n", reason, count)
+		}
+	}
+}
+
+func validateScanFlags(flags scanFlags) error {
+	if flags.maxFileBytes <= 0 {
+		return errf("max-file-bytes must be greater than 0")
+	}
+	if flags.maxChunkChars <= 0 {
+		return errf("max-chunk-chars must be greater than 0")
+	}
+	return nil
+}
+
+type multiFlag []string
+
+func (m *multiFlag) String() string {
+	return strings.Join(*m, ",")
+}
+
+func (m *multiFlag) Set(value string) error {
+	if strings.TrimSpace(value) == "" {
+		return errf("must not be empty")
+	}
+	*m = append(*m, value)
+	return nil
+}
+
+func shellFields(value string) []string {
+	return strings.Fields(value)
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func promptText(stdin io.Reader, args []string, promptFile string, readStdin bool) (string, error) {
+	if promptFile != "" && readStdin {
+		return "", errf("--prompt-file and --stdin are mutually exclusive")
+	}
+	if promptFile != "" {
+		data, err := os.ReadFile(promptFile)
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	}
+	if readStdin {
+		data, err := io.ReadAll(stdin)
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	}
+	return strings.Join(args, " "), nil
+}
+
+func isLocalOllamaURL(value string) bool {
+	if value == "" {
+		value = os.Getenv("CLYDE_OLLAMA_URL")
+	}
+	if value == "" {
+		return true
+	}
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return false
+	}
+	host := parsed.Hostname()
+	return host == "127.0.0.1" || host == "localhost" || host == "::1"
+}
+
+func interspersedArgs(args []string, boolFlags map[string]bool) []string {
+	var flags []string
+	var positional []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			positional = append(positional, args[i+1:]...)
+			break
+		}
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			positional = append(positional, arg)
+			continue
+		}
+		flags = append(flags, arg)
+		name := strings.TrimLeft(arg, "-")
+		if idx := strings.IndexByte(name, '='); idx >= 0 {
+			continue
+		}
+		if boolFlags[name] {
+			continue
+		}
+		if i+1 < len(args) {
+			i++
+			flags = append(flags, args[i])
+		}
+	}
+	return append(flags, positional...)
+}
