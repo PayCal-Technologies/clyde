@@ -8,17 +8,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 )
 
-const defaultOllamaURL = "http://127.0.0.1:11434"
-
 type LocalModel struct {
-	Name       string
-	Size       int64
-	ModifiedAt string
+	Name       string `json:"name"`
+	Size       int64  `json:"size"`
+	ModifiedAt string `json:"modified_at"`
 }
 
 type OllamaClient struct {
@@ -26,12 +23,16 @@ type OllamaClient struct {
 	Client  *http.Client
 }
 
+type GenerateOptions struct {
+	Model  string
+	Prompt string
+	Stream bool
+	NumCtx int
+}
+
 func NewOllamaClient(baseURL string, timeout time.Duration) OllamaClient {
 	if baseURL == "" {
-		baseURL = os.Getenv("CLYDE_OLLAMA_URL")
-	}
-	if baseURL == "" {
-		baseURL = defaultOllamaURL
+		baseURL = DefaultConfig().OllamaURL
 	}
 	if timeout <= 0 {
 		timeout = 120 * time.Second
@@ -74,14 +75,22 @@ func (c OllamaClient) ListModels(ctx context.Context) ([]LocalModel, error) {
 }
 
 func (c OllamaClient) Generate(ctx context.Context, model, prompt string, stream bool, out io.Writer) (string, error) {
-	if model == "" {
+	return c.GenerateWithOptions(ctx, GenerateOptions{Model: model, Prompt: prompt, Stream: stream}, out)
+}
+
+func (c OllamaClient) GenerateWithOptions(ctx context.Context, opts GenerateOptions, out io.Writer) (string, error) {
+	if opts.Model == "" {
 		return "", errf("model must not be empty")
 	}
-	body, err := json.Marshal(map[string]any{
-		"model":  model,
-		"prompt": prompt,
-		"stream": stream,
-	})
+	payload := map[string]any{
+		"model":  opts.Model,
+		"prompt": opts.Prompt,
+		"stream": opts.Stream,
+	}
+	if opts.NumCtx > 0 {
+		payload["options"] = map[string]any{"num_ctx": opts.NumCtx}
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
 	}
@@ -99,7 +108,7 @@ func (c OllamaClient) Generate(ctx context.Context, model, prompt string, stream
 		body, _ := io.ReadAll(resp.Body)
 		return "", errf("ollama generate failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
-	if !stream {
+	if !opts.Stream {
 		var payload struct {
 			Response string `json:"response"`
 		}
@@ -139,21 +148,19 @@ func (c OllamaClient) Generate(ctx context.Context, model, prompt string, stream
 	return full.String(), nil
 }
 
-func SelectModel(explicit string, models []LocalModel) (string, error) {
+func SelectModel(explicit string, cfg Config, models []LocalModel) (string, error) {
 	if explicit != "" {
 		return explicit, nil
 	}
-	if env := os.Getenv("CLYDE_MODEL"); env != "" {
-		return env, nil
+	if cfg.Model != "" {
+		return cfg.Model, nil
 	}
 	if len(models) == 0 {
-		return "", errf("no Ollama models found; run `ollama pull qwen2.5-coder:7b` or pass --model")
+		return "", errf("no Ollama models found; run `ollama pull %s` or pass --model", DefaultConfig().Model)
 	}
-	for _, preferred := range []string{"qwen2.5-coder:14b", "qwen2.5-coder:7b"} {
-		for _, model := range models {
-			if model.Name == preferred {
-				return model.Name, nil
-			}
+	for _, model := range models {
+		if model.Name == DefaultConfig().Model {
+			return model.Name, nil
 		}
 	}
 	return models[0].Name, nil

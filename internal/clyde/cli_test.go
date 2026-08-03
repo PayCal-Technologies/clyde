@@ -24,6 +24,25 @@ func TestPreviewShowsIncludedFiles(t *testing.T) {
 	}
 }
 
+func TestPreviewJSON(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "app.go"), "package main\n")
+
+	var out, errOut bytes.Buffer
+	status := Main([]string{"preview", dir, "--json"}, &out, &errOut)
+
+	if status != 0 {
+		t.Fatalf("status=%d stderr=%s", status, errOut.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["included_files"].(float64) != 1 {
+		t.Fatalf("unexpected payload: %#v", payload)
+	}
+}
+
 func TestBundleWritesManifest(t *testing.T) {
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, "app.go"), "package main\n")
@@ -71,5 +90,16 @@ func TestBookCommandPrintsDatedName(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), " - Demo Sync") {
 		t.Fatalf("unexpected output: %s", out.String())
+	}
+}
+
+func TestSubcommandHelpExitsCleanly(t *testing.T) {
+	var out, errOut bytes.Buffer
+	status := Main([]string{"agent", "--help"}, &out, &errOut)
+	if status != 0 {
+		t.Fatalf("status=%d stderr=%s", status, errOut.String())
+	}
+	if !strings.Contains(out.String(), "Usage of agent") {
+		t.Fatalf("unexpected help: %s", out.String())
 	}
 }

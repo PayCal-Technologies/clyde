@@ -1,7 +1,9 @@
 package clyde
 
 import (
+	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 type AgentPromptOptions struct {
@@ -40,13 +42,13 @@ func BuildAgentPrompt(result ScanResult, chunks []ChunkRecord, opts AgentPromptO
 	}
 	b.WriteString("\nContext chunks:\n")
 	remaining := maxChars - b.Len()
-	for _, chunk := range chunks {
+	for _, chunk := range prioritizeAgentChunks(chunks) {
 		if remaining <= 0 {
 			break
 		}
 		text := chunk.Text
 		if len(text) > remaining {
-			text = text[:remaining]
+			text = safePrefix(text, remaining)
 		}
 		b.WriteString("\n--- ")
 		b.WriteString(chunk.Path)
@@ -62,4 +64,46 @@ func BuildAgentPrompt(result ScanResult, chunks []ChunkRecord, opts AgentPromptO
 		b.WriteString("\n\n[Context truncated to fit Clyde's local prompt budget.]\n")
 	}
 	return b.String()
+}
+
+func prioritizeAgentChunks(chunks []ChunkRecord) []ChunkRecord {
+	ordered := append([]ChunkRecord(nil), chunks...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return agentPathRank(ordered[i].Path) < agentPathRank(ordered[j].Path)
+	})
+	return ordered
+}
+
+func agentPathRank(path string) int {
+	lower := strings.ToLower(path)
+	switch {
+	case lower == "readme.md":
+		return 0
+	case lower == "go.mod":
+		return 1
+	case strings.HasPrefix(lower, "cmd/"):
+		return 2
+	case strings.HasPrefix(lower, "internal/") && strings.HasSuffix(lower, "_test.go"):
+		return 4
+	case strings.HasPrefix(lower, "internal/"):
+		return 3
+	case strings.Contains(lower, "test"):
+		return 5
+	default:
+		return 6
+	}
+}
+
+func safePrefix(value string, maxBytes int) string {
+	if maxBytes <= 0 {
+		return ""
+	}
+	if len(value) <= maxBytes {
+		return value
+	}
+	value = value[:maxBytes]
+	for !utf8.ValidString(value) && len(value) > 0 {
+		value = value[:len(value)-1]
+	}
+	return value
 }

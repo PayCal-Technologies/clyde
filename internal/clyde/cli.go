@@ -49,6 +49,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	switch args[0] {
 	case "tui":
 		return RunTUI(stdin, stdout, stderr)
+	case "config":
+		return cmdConfig(args[1:], stdout)
 	case "preview":
 		return cmdPreview(args[1:], stdout)
 	case "bundle":
@@ -82,18 +84,23 @@ type scanFlags struct {
 func addScanFlags(fs *flag.FlagSet, flags *scanFlags) {
 	fs.Var(&flags.include, "include", "only include paths matching this glob; repeatable")
 	fs.Var(&flags.exclude, "exclude", "skip paths matching this glob in addition to Clyde defaults; repeatable")
-	fs.Int64Var(&flags.maxFileBytes, "max-file-bytes", 250000, "skip files larger than this many bytes")
-	fs.IntVar(&flags.maxChunkChars, "max-chunk-chars", 18000, "split uploaded source text at this many characters")
+	fs.Int64Var(&flags.maxFileBytes, "max-file-bytes", flags.maxFileBytes, "skip files larger than this many bytes")
+	fs.IntVar(&flags.maxChunkChars, "max-chunk-chars", flags.maxChunkChars, "split uploaded source text at this many characters")
 }
 
 func cmdPreview(args []string, out io.Writer) error {
-	flags := scanFlags{}
+	cfg, _, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+	flags := scanFlags{maxFileBytes: cfg.MaxFileBytes, maxChunkChars: cfg.MaxChunkChars}
 	fs := flag.NewFlagSet("preview", flag.ContinueOnError)
 	fs.SetOutput(out)
 	showFiles := fs.Int("show-files", 20, "show first N included files")
 	showSkips := fs.Int("show-skips", 50, "show first N skipped files")
+	jsonOut := fs.Bool("json", false, "print machine-readable JSON summary")
 	addScanFlags(fs, &flags)
-	if err := fs.Parse(interspersedArgs(args, map[string]bool{})); err != nil {
+	if err := fs.Parse(interspersedArgs(args, map[string]bool{"json": true})); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -105,6 +112,9 @@ func cmdPreview(args []string, out io.Writer) error {
 	result, chunks, err := scanAndChunk(fs.Arg(0), flags, "")
 	if err != nil {
 		return err
+	}
+	if *jsonOut {
+		return printPreviewJSON(out, result, len(chunks), flags)
 	}
 	printSummary(out, result, len(chunks), flags)
 	if len(result.Files) > 0 && *showFiles > 0 {
@@ -132,7 +142,11 @@ func cmdPreview(args []string, out io.Writer) error {
 }
 
 func cmdBundle(args []string, out io.Writer) error {
-	flags := scanFlags{}
+	cfg, _, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+	flags := scanFlags{maxFileBytes: cfg.MaxFileBytes, maxChunkChars: cfg.MaxChunkChars}
 	fs := flag.NewFlagSet("bundle", flag.ContinueOnError)
 	fs.SetOutput(out)
 	outDir := fs.String("out", ".clyde/out", "directory for manifest.json and chunks.jsonl")
@@ -186,7 +200,11 @@ func cmdBundle(args []string, out io.Writer) error {
 }
 
 func cmdSync(args []string, out, errOut io.Writer) error {
-	flags := scanFlags{}
+	cfg, _, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+	flags := scanFlags{maxFileBytes: cfg.MaxFileBytes, maxChunkChars: cfg.MaxChunkChars}
 	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
 	fs.SetOutput(out)
 	notebookID := fs.String("notebook-id", "", "NotebookLM notebook id")
@@ -353,11 +371,16 @@ func cmdBook(args []string, out io.Writer) error {
 }
 
 func cmdModels(args []string, out io.Writer) error {
+	cfg, _, err := LoadConfig()
+	if err != nil {
+		return err
+	}
 	fs := flag.NewFlagSet("models", flag.ContinueOnError)
 	fs.SetOutput(out)
-	ollamaURL := fs.String("ollama-url", "", "Ollama base URL")
+	ollamaURL := fs.String("ollama-url", cfg.OllamaURL, "Ollama base URL")
 	timeout := fs.Float64("timeout", 10, "seconds to wait for Ollama")
-	if err := fs.Parse(args); err != nil {
+	jsonOut := fs.Bool("json", false, "print machine-readable JSON")
+	if err := fs.Parse(interspersedArgs(args, map[string]bool{"json": true})); err != nil {
 		return err
 	}
 	client := NewOllamaClient(*ollamaURL, time.Duration(*timeout*float64(time.Second)))
@@ -365,7 +388,19 @@ func cmdModels(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	selected, _ := SelectModel("", models)
+	selected, _ := SelectModel("", cfg, models)
+	if *jsonOut {
+		data, err := json.MarshalIndent(map[string]any{
+			"ollama_url": client.BaseURL,
+			"selected":   selected,
+			"models":     models,
+		}, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
 	if len(models) == 0 {
 		fmt.Fprintln(out, "No Ollama models found.")
 		return nil
@@ -381,11 +416,16 @@ func cmdModels(args []string, out io.Writer) error {
 }
 
 func cmdAsk(args []string, stdin io.Reader, out io.Writer) error {
+	cfg, _, err := LoadConfig()
+	if err != nil {
+		return err
+	}
 	fs := flag.NewFlagSet("ask", flag.ContinueOnError)
 	fs.SetOutput(out)
-	model := fs.String("model", "", "Ollama model name")
-	ollamaURL := fs.String("ollama-url", "", "Ollama base URL")
-	timeout := fs.Float64("timeout", 120, "seconds to wait for Ollama")
+	model := fs.String("model", cfg.Model, "Ollama model name")
+	ollamaURL := fs.String("ollama-url", cfg.OllamaURL, "Ollama base URL")
+	timeout := fs.Float64("timeout", float64(cfg.AskTimeoutSeconds), "seconds to wait for Ollama")
+	numCtx := fs.Int("num-ctx", cfg.NumCtx, "Ollama context window tokens; 0 uses the model default")
 	noStream := fs.Bool("no-stream", false, "wait for the full response before printing")
 	promptFile := fs.String("prompt-file", "", "read prompt from file")
 	readStdin := fs.Bool("stdin", false, "read prompt from stdin")
@@ -404,11 +444,16 @@ func cmdAsk(args []string, stdin io.Reader, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	selected, err := SelectModel(*model, models)
+	selected, err := SelectModel(*model, cfg, models)
 	if err != nil {
 		return err
 	}
-	response, err := client.Generate(context.Background(), selected, prompt, !*noStream, out)
+	response, err := client.GenerateWithOptions(context.Background(), GenerateOptions{
+		Model:  selected,
+		Prompt: prompt,
+		Stream: !*noStream,
+		NumCtx: *numCtx,
+	}, out)
 	if err != nil {
 		return err
 	}
@@ -421,13 +466,18 @@ func cmdAsk(args []string, stdin io.Reader, out io.Writer) error {
 }
 
 func cmdAgent(args []string, stdin io.Reader, out io.Writer) error {
-	flags := scanFlags{}
+	cfg, _, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+	flags := scanFlags{maxFileBytes: cfg.MaxFileBytes, maxChunkChars: cfg.MaxChunkChars}
 	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
 	fs.SetOutput(out)
-	model := fs.String("model", "", "Ollama model name; defaults to CLYDE_MODEL, qwen2.5-coder:14b, qwen2.5-coder:7b, then first available")
-	ollamaURL := fs.String("ollama-url", "", "Ollama base URL")
-	timeout := fs.Float64("timeout", 180, "seconds to wait for Ollama")
-	maxContext := fs.Int("max-context-chars", 24000, "maximum repository context characters to send to the model")
+	model := fs.String("model", cfg.Model, "Ollama model name")
+	ollamaURL := fs.String("ollama-url", cfg.OllamaURL, "Ollama base URL")
+	timeout := fs.Float64("timeout", float64(cfg.AgentTimeoutSeconds), "seconds to wait for Ollama")
+	maxContext := fs.Int("max-context-chars", cfg.MaxContextChars, "maximum repository context characters to send to the model")
+	numCtx := fs.Int("num-ctx", cfg.NumCtx, "Ollama context window tokens; 0 uses the model default")
 	noStream := fs.Bool("no-stream", false, "wait for the full response before printing")
 	promptFile := fs.String("prompt-file", "", "read feedback prompt from file")
 	readStdin := fs.Bool("stdin", false, "read feedback prompt from stdin")
@@ -459,7 +509,7 @@ func cmdAgent(args []string, stdin io.Reader, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	selected, err := SelectModel(*model, models)
+	selected, err := SelectModel(*model, cfg, models)
 	if err != nil {
 		return err
 	}
@@ -469,7 +519,12 @@ func cmdAgent(args []string, stdin io.Reader, out io.Writer) error {
 	})
 	fmt.Fprintf(out, "Clyde agent using local model: %s\n", selected)
 	fmt.Fprintf(out, "Included files: %d, chunks: %d, prompt chars: %d\n\n", len(result.Files), len(chunks), len(prompt))
-	response, err := client.Generate(context.Background(), selected, prompt, !*noStream, out)
+	response, err := client.GenerateWithOptions(context.Background(), GenerateOptions{
+		Model:  selected,
+		Prompt: prompt,
+		Stream: !*noStream,
+		NumCtx: *numCtx,
+	}, out)
 	if err != nil {
 		return err
 	}
@@ -482,8 +537,57 @@ func cmdAgent(args []string, stdin io.Reader, out io.Writer) error {
 }
 
 func printHelp(out io.Writer) {
-	fmt.Fprintln(out, "usage: clyde {tui,preview,bundle,sync,daemon,status,book,models,ask,agent} ...")
+	fmt.Fprintln(out, "usage: clyde {tui,config,preview,bundle,sync,daemon,status,book,models,ask,agent} ...")
 	fmt.Fprintln(out, "run clyde with no arguments in a terminal to open the TUI")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "examples:")
+	fmt.Fprintln(out, "  clyde preview . --include 'internal/**/*.go'")
+	fmt.Fprintln(out, "  clyde models")
+	fmt.Fprintln(out, "  clyde config show")
+	fmt.Fprintln(out, "  clyde ask --model qwen2.5-coder:7b --stdin")
+	fmt.Fprintln(out, "  clyde agent . --model qwen2.5-coder:7b 'review this repo'")
+}
+
+func cmdConfig(args []string, out io.Writer) error {
+	if len(args) == 0 {
+		args = []string{"show"}
+	}
+	path, err := ConfigPath()
+	if err != nil {
+		return err
+	}
+	switch args[0] {
+	case "path":
+		fmt.Fprintln(out, path)
+		return nil
+	case "show":
+		cfg, path, err := LoadConfig()
+		if err != nil {
+			return err
+		}
+		data, err := json.MarshalIndent(map[string]any{
+			"path":   path,
+			"config": cfg,
+		}, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(out, string(data))
+		return nil
+	case "init":
+		if _, err := os.Stat(path); err == nil {
+			return errf("config already exists: %s", path)
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		if err := WriteDefaultConfig(path); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "Wrote: %s\n", path)
+		return nil
+	default:
+		return errf("unknown config command: %s", args[0])
+	}
 }
 
 func scanAndChunk(repo string, flags scanFlags, bookTitle string) (ScanResult, []ChunkRecord, error) {
@@ -530,6 +634,39 @@ func printSummary(out io.Writer, result ScanResult, chunkCount int, flags scanFl
 			fmt.Fprintf(out, "  %s: %d\n", reason, count)
 		}
 	}
+}
+
+func printPreviewJSON(out io.Writer, result ScanResult, chunkCount int, flags scanFlags) error {
+	files := make([]map[string]any, 0, len(result.Files))
+	for _, file := range result.Files {
+		files = append(files, map[string]any{
+			"path":   file.Rel,
+			"size":   file.Size,
+			"sha256": file.SHA256,
+		})
+	}
+	skips := make([]map[string]any, 0, len(result.Skips))
+	for _, skip := range result.Skips {
+		skips = append(skips, map[string]any{"path": skip.Path, "reason": skip.Reason})
+	}
+	data, err := json.MarshalIndent(map[string]any{
+		"repo":            result.Repo,
+		"included_files":  len(result.Files),
+		"skipped_files":   len(result.Skips),
+		"total_bytes":     result.TotalBytes(),
+		"chunk_count":     chunkCount,
+		"max_file_bytes":  flags.maxFileBytes,
+		"max_chunk_chars": flags.maxChunkChars,
+		"include":         []string(flags.include),
+		"exclude":         []string(flags.exclude),
+		"files":           files,
+		"skips":           skips,
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(out, string(data))
+	return nil
 }
 
 func validateScanFlags(flags scanFlags) error {
@@ -590,9 +727,6 @@ func promptText(stdin io.Reader, args []string, promptFile string, readStdin boo
 
 func isLocalOllamaURL(value string) bool {
 	if value == "" {
-		value = os.Getenv("CLYDE_OLLAMA_URL")
-	}
-	if value == "" {
 		return true
 	}
 	parsed, err := url.Parse(value)
@@ -618,6 +752,9 @@ func interspersedArgs(args []string, boolFlags map[string]bool) []string {
 		}
 		flags = append(flags, arg)
 		name := strings.TrimLeft(arg, "-")
+		if name == "h" || name == "help" {
+			continue
+		}
 		if idx := strings.IndexByte(name, '='); idx >= 0 {
 			continue
 		}

@@ -38,6 +38,9 @@ type Manifest struct {
 }
 
 func MakeChunks(result ScanResult, maxChunkChars int, bookTitle string) []ChunkRecord {
+	if maxChunkChars <= 0 {
+		maxChunkChars = DefaultConfig().MaxChunkChars
+	}
 	var chunks []ChunkRecord
 	for _, file := range result.Files {
 		pieces := splitText(file.Text, maxChunkChars)
@@ -60,6 +63,9 @@ func MakeChunks(result ScanResult, maxChunkChars int, bookTitle string) []ChunkR
 }
 
 func WriteBundle(result ScanResult, outDir string, maxChunkChars int, bookTitle, bookSlug string) (Manifest, error) {
+	if info, err := os.Stat(outDir); err == nil && !info.IsDir() {
+		return Manifest{}, errf("out dir must be a directory, not a file: %s", outDir)
+	}
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return Manifest{}, err
 	}
@@ -105,6 +111,9 @@ func WriteBundle(result ScanResult, outDir string, maxChunkChars int, bookTitle,
 }
 
 func splitText(text string, maxChunkChars int) []string {
+	if maxChunkChars <= 0 {
+		maxChunkChars = DefaultConfig().MaxChunkChars
+	}
 	if len(text) <= maxChunkChars {
 		return []string{text}
 	}

@@ -3,6 +3,7 @@ package clyde
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -34,6 +35,34 @@ func TestScanRepoRespectsExclude(t *testing.T) {
 	}
 	if len(result.Files) != 1 || result.Files[0].Rel != "app.go" {
 		t.Fatalf("unexpected files: %#v", result.Files)
+	}
+}
+
+func TestScanRepoRejectsFilePath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "file.go")
+	mustWrite(t, path, "package main\n")
+
+	_, err := ScanRepo(path, nil, nil, 250000)
+
+	if err == nil || !strings.Contains(err.Error(), "repo path is not a directory") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestScanRepoIncludeCanMatchNoFiles(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "app.go"), "package main\n")
+
+	result, err := ScanRepo(dir, []string{"*.md"}, nil, 250000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Files) != 0 {
+		t.Fatalf("expected no files, got %#v", result.Files)
+	}
+	if len(result.Skips) != 1 || result.Skips[0].Reason != "not matched by include globs" {
+		t.Fatalf("unexpected skips: %#v", result.Skips)
 	}
 }
 
