@@ -3,7 +3,7 @@
 Clyde is a small Go MCP-client harness for moving auditable repository source bundles
 into Google NotebookLM.
 
-Current version: `0.2.4`
+Current version: `0.2.5`
 
 Official resources:
 

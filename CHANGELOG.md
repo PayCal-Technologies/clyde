@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.2.5 - 2026-08-22
+
+- Add a complete, human-readable `TESTING.md` that documents the full Clyde
+  test suite, when to run each check, release verification, Windows coverage,
+  and troubleshooting.
+- Add `help/testing.html` to the bundled Clyde help system with direct links to
+  the official Clyde homepage, public help site, and GitHub repository.
+- Add official PayCal Technologies, Clyde homepage, help, and GitHub references
+  to the testing guide.
+
 ## v0.2.4 - 2026-08-22
 
 - Add `clyde scan-report` for read-only repository scan summaries with largest
