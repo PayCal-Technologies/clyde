@@ -27,6 +27,8 @@ const (
 
 const maxCLISeconds = 24 * 60 * 60
 
+const maxPromptInputBytes = 1 << 20
+
 func Main(args []string, stdout, stderr io.Writer) int {
 	return MainWithInput(args, os.Stdin, stdout, stderr)
 }
@@ -843,20 +845,37 @@ func promptText(stdin io.Reader, args []string, promptFile string, readStdin boo
 		return "", errf("--prompt-file and --stdin are mutually exclusive")
 	}
 	if promptFile != "" {
-		data, err := os.ReadFile(promptFile)
+		file, err := os.Open(promptFile)
+		if err != nil {
+			return "", err
+		}
+		defer file.Close()
+		data, err := readLimitedText(file, maxPromptInputBytes, "--prompt-file")
 		if err != nil {
 			return "", err
 		}
 		return string(data), nil
 	}
 	if readStdin {
-		data, err := io.ReadAll(stdin)
+		data, err := readLimitedText(stdin, maxPromptInputBytes, "--stdin")
 		if err != nil {
 			return "", err
 		}
 		return string(data), nil
 	}
 	return strings.Join(args, " "), nil
+}
+
+func readLimitedText(reader io.Reader, limit int64, label string) ([]byte, error) {
+	limited := io.LimitReader(reader, limit+1)
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, errf("%s input is too large; maximum is %d bytes", label, limit)
+	}
+	return data, nil
 }
 
 func isLocalOllamaURL(value string) bool {

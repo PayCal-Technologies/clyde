@@ -2,8 +2,17 @@ package clyde
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"strings"
+	"time"
+)
+
+const (
+	maxJSONRPCBodyBytes = 1 << 20
+	jsonRPCTimeout      = 10 * time.Second
 )
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
@@ -27,18 +36,29 @@ func rpcCall(url, method string, params any, out any) error {
 	if err != nil {
 		return err
 	}
-	resp, err := http.Post(url, "application/json", bytes.NewReader(data))
+	ctx, cancel := context.WithTimeout(context.Background(), jsonRPCTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxJSONRPCBodyBytes))
+		return errf("JSON-RPC call failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
 	var decoded struct {
 		Result json.RawMessage `json:"result"`
 		Error  *struct {
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxJSONRPCBodyBytes)).Decode(&decoded); err != nil {
 		return err
 	}
 	if decoded.Error != nil {

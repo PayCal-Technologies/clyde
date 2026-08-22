@@ -2,6 +2,7 @@ package clyde
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 )
 
@@ -14,11 +15,20 @@ func numberInt(value any) int {
 	case int:
 		return v
 	case int64:
+		if v > int64(maxInt()) || v < int64(minInt()) {
+			return 0
+		}
 		return int(v)
 	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) || math.Trunc(v) != v || v > float64(maxInt()) || v < float64(minInt()) {
+			return 0
+		}
 		return int(v)
 	case jsonNumber:
-		n, _ := strconv.Atoi(string(v))
+		n, err := strconv.Atoi(string(v))
+		if err != nil {
+			return 0
+		}
 		return n
 	default:
 		return 0
@@ -40,4 +50,12 @@ func formatBytes(size int64) string {
 		amount /= 1024
 	}
 	return fmt.Sprintf("%d B", size)
+}
+
+func maxInt() int {
+	return int(^uint(0) >> 1)
+}
+
+func minInt() int {
+	return -maxInt() - 1
 }

@@ -184,6 +184,7 @@ func ServeStatus(host string, port int, out io.Writer) error {
 }
 
 func handleRPC(w http.ResponseWriter, r *http.Request, store *StatusStore) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONRPCBodyBytes)
 	var req struct {
 		JSONRPC string          `json:"jsonrpc"`
 		ID      any             `json:"id"`

@@ -3,6 +3,7 @@ package clyde
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -178,5 +179,26 @@ func TestCLIRejectsInvalidNumericFlags(t *testing.T) {
 				t.Fatalf("stderr missing %q: %s", tt.want, errOut.String())
 			}
 		})
+	}
+}
+
+func TestPromptTextLimitsPromptFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "prompt.txt")
+	if err := os.WriteFile(path, bytes.Repeat([]byte("a"), maxPromptInputBytes+1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := promptText(strings.NewReader(""), nil, path, false)
+
+	if err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPromptTextLimitsStdin(t *testing.T) {
+	_, err := promptText(io.LimitReader(strings.NewReader(strings.Repeat("a", maxPromptInputBytes+1)), maxPromptInputBytes+1), nil, "", true)
+
+	if err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
