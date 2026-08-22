@@ -8,6 +8,13 @@ syncing approved context to NotebookLM, and asking local Ollama models for
 repo-aware feedback. Its tests focus on safety, predictable CLI behavior,
 bounded input/output, local-first defaults, and cross-platform portability.
 
+## Official Resources
+
+- Clyde homepage: [paycaltech.com/clyde](https://paycaltech.com/clyde)
+- Clyde help: [paycaltech.com/clyde/help](https://paycaltech.com/clyde/help)
+- GitHub repository: [github.com/PayCal-Technologies/clyde](https://github.com/PayCal-Technologies/clyde)
+- Created by [PayCal Technologies](https://paycaltech.com/)
+
 ## Quick Start
 
 Run the full test suite from the repository root:
