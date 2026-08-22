@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1292" height="812" viewBox="0 0 1292 812">
+  <defs><linearGradient id="term" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#06101b"/><stop offset="1" stop-color="#102033"/></linearGradient></defs>
+  <rect x="0" y="0" width="1292" height="812" rx="28" fill="url(#term)"/>
+  <rect x="0" y="0" width="1292" height="72" rx="28" fill="#17283a"/>
+  <rect x="0" y="44" width="1292" height="28" fill="#17283a"/>
+  <circle cx="42" cy="36" r="11" fill="#ff5f57"/><circle cx="78" cy="36" r="11" fill="#ffbd2e"/><circle cx="114" cy="36" r="11" fill="#28c840"/>
+  <text x="646" y="43" text-anchor="middle" fill="#c1d3e2" font-size="25" font-family="Arial, sans-serif" font-weight="700">Clyde config init</text>
+  <rect x="992" y="18" width="244" height="36" rx="18" fill="#0c3d62" stroke="#57b3ff" stroke-opacity="0.55"/>
+  <text x="1114" y="43" text-anchor="middle" fill="#bde4ff" font-size="18" font-family="Arial, sans-serif" font-weight="700">local configuration</text>
+  <g font-family="Monaco, Consolas, monospace" font-size="24" font-weight="500">
+    <text x="34" y="112" fill="#35d0a3">paycal@local</text>
+    <text x="220" y="112" fill="#9ab2c5"> : </text>
+    <text x="245" y="112" fill="#57b3ff">~/repo</text>
+    <text x="340" y="112" fill="#eaf6ff">$ clyde config init</text>
+    <text x="34" y="180" fill="#4bd680">Created config: ~/Library/Application Support/clyde/config.json</text>
+    <text x="34" y="248" fill="#9ab2c5">{</text>
+    <text x="34" y="282" fill="#eaf6ff">  &quot;ollama_url&quot;: &quot;http://127.0.0.1:11434&quot;,</text>
+    <text x="34" y="316" fill="#eaf6ff">  &quot;model&quot;: &quot;qwen2.5-coder:7b&quot;,</text>
+    <text x="34" y="350" fill="#eaf6ff">  &quot;num_ctx&quot;: 8192,</text>
+    <text x="34" y="384" fill="#eaf6ff">  &quot;max_file_bytes&quot;: 262144,</text>
+    <text x="34" y="418" fill="#eaf6ff">  &quot;max_chunk_chars&quot;: 12000,</text>
+    <text x="34" y="452" fill="#eaf6ff">  &quot;default_excludes&quot;: [&quot;.git&quot;, &quot;node_modules&quot;, &quot;vendor&quot;],</text>
+    <text x="34" y="486" fill="#eaf6ff">  &quot;redact_secrets&quot;: true</text>
+    <text x="34" y="520" fill="#9ab2c5">}</text>
+    <text x="34" y="588" fill="#57b3ff">Next</text>
+    <text x="92" y="588" fill="#eaf6ff">  clyde doctor .</text>
+    <text x="34" y="622" fill="#9ab2c5">Tip</text>
+    <text x="77.5" y="622" fill="#eaf6ff">   use CLYDE_CONFIG to point at a project-specific config</text>
+  </g>
+  <rect x="0" y="0" width="1292" height="812" rx="28" fill="none" stroke="#9dcced" stroke-opacity="0.68"/>
+</svg>

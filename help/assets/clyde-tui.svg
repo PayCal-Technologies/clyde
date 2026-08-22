@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1292" height="812" viewBox="0 0 1292 812">
+  <defs><linearGradient id="term" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#06101b"/><stop offset="1" stop-color="#102033"/></linearGradient></defs>
+  <rect x="0" y="0" width="1292" height="812" rx="28" fill="url(#term)"/>
+  <rect x="0" y="0" width="1292" height="72" rx="28" fill="#17283a"/>
+  <rect x="0" y="44" width="1292" height="28" fill="#17283a"/>
+  <circle cx="42" cy="36" r="11" fill="#ff5f57"/><circle cx="78" cy="36" r="11" fill="#ffbd2e"/><circle cx="114" cy="36" r="11" fill="#28c840"/>
+  <text x="646" y="43" text-anchor="middle" fill="#c1d3e2" font-size="25" font-family="Arial, sans-serif" font-weight="700">Clyde terminal UI</text>
+  <rect x="992" y="18" width="244" height="36" rx="18" fill="#0c3d62" stroke="#57b3ff" stroke-opacity="0.55"/>
+  <text x="1114" y="43" text-anchor="middle" fill="#bde4ff" font-size="18" font-family="Arial, sans-serif" font-weight="700">interactive local workflow</text>
+  <g font-family="Monaco, Consolas, monospace" font-size="24" font-weight="500">
+    <text x="34" y="112" fill="#35d0a3">paycal@local</text>
+    <text x="220" y="112" fill="#9ab2c5"> : </text>
+    <text x="245" y="112" fill="#57b3ff">~/repo</text>
+    <text x="340" y="112" fill="#eaf6ff">$ clyde tui</text>
+    <text x="34" y="180" fill="#57b3ff">Clyde TUI</text>
+    <text x="164.5" y="180" fill="#9ab2c5">  local repository assistant</text>
+    <text x="34" y="214" fill="#9ab2c5">------------------------------------------------------------</text>
+    <text x="34" y="248" fill="#4bd680">Model</text>
+    <text x="106.5" y="248" fill="#eaf6ff">       qwen2.5-coder:7b</text>
+    <text x="440" y="248" fill="#9ab2c5">  Ollama http://127.0.0.1:11434</text>
+    <text x="34" y="282" fill="#4bd680">Repo</text>
+    <text x="92" y="282" fill="#eaf6ff">        /private/var/www/paycal-technologies/clyde</text>
+    <text x="34" y="316" fill="#4bd680">Scan</text>
+    <text x="92" y="316" fill="#eaf6ff">        36 files, 2 skips, 40 chunks, 187.9 KiB</text>
+    <text x="34" y="384" fill="#57b3ff">Actions</text>
+    <text x="34" y="418" fill="#eaf6ff">  [1] Ask model       [2] Preview repo      [3] Run agent</text>
+    <text x="34" y="452" fill="#eaf6ff">  [4] Bundle source   [5] Sync review      [6] Status</text>
+    <text x="34" y="520" fill="#9ab2c5">Prompt</text>
+    <text x="121" y="520" fill="#eaf6ff">  Review the command parser for missing input guards</text>
+    <text x="34" y="554" fill="#9ab2c5">Keys</text>
+    <text x="92" y="554" fill="#eaf6ff">    arrows/j/k move   enter select   q quit</text>
+    <text x="34" y="622" fill="#4bd680">Ready</text>
+    <text x="106.5" y="622" fill="#eaf6ff">  no network upload without explicit approval</text>
+  </g>
+  <rect x="0" y="0" width="1292" height="812" rx="28" fill="none" stroke="#9dcced" stroke-opacity="0.68"/>
+</svg>
