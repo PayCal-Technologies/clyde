@@ -3,7 +3,7 @@
 Clyde is a small Go MCP-client harness for moving auditable repository source bundles
 into Google NotebookLM.
 
-Current version: `0.2.0`
+Current version: `0.2.1`
 
 Official resources:
 
@@ -33,6 +33,33 @@ Run tests:
 ```bash
 go test ./...
 ```
+
+## Standard Release Procedure
+
+Use this procedure for every Clyde release and performance pass:
+
+1. Check `git status --short` first. Commit and push any unrelated pending work
+   before starting a review.
+2. Run a targeted Clyde-on-Clyde review, such as:
+
+   ```bash
+   clyde agent . \
+     --include "internal/**/*.go" \
+     --include "cmd/**/*.go" \
+     --include "README.md" \
+     --include "CHANGELOG.md" \
+     "Performance review for Clyde itself. Identify concrete optimizations worth implementing now."
+   ```
+
+3. Implement only concrete, testable improvements. Record rejected suggestions
+   when they do not fit Clyde's CLI execution model.
+4. Run `gofmt`, `go test ./...`, `go run ./cmd/clyde --about`, and
+   `go run ./cmd/clyde help --json`.
+5. Update `VERSION`, `productVersion`, `CHANGELOG.md`, and this README.
+6. Commit, push, create an annotated version tag, push the tag, and publish a
+   GitHub release with implementation notes and verification results.
+7. Rebuild the local global install after the release when this workstation
+   needs the new `clyde` binary.
 
 Install from source:
 

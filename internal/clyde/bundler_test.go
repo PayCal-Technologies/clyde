@@ -48,6 +48,21 @@ func TestMakeChunksDefaultsInvalidChunkSize(t *testing.T) {
 	}
 }
 
+func TestSplitTextPreservesTextAcrossManySmallPieces(t *testing.T) {
+	text := strings.Repeat("alpha\n", 80)
+
+	chunks := splitText(text, 25)
+
+	if strings.Join(chunks, "") != text {
+		t.Fatalf("split text did not preserve original content")
+	}
+	for _, chunk := range chunks {
+		if len(chunk) > 25 {
+			t.Fatalf("chunk exceeded limit: %d", len(chunk))
+		}
+	}
+}
+
 func TestWriteBundleRecordsBookMetadata(t *testing.T) {
 	dir := t.TempDir()
 	manifest, err := WriteBundle(ScanResult{Repo: dir}, filepath.Join(dir, "out"), 100, "2026-07-21 1435 - Demo", "20260721-1435-demo")

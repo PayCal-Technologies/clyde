@@ -16,7 +16,7 @@ import (
 
 const (
 	productName        = "Clyde"
-	productVersion     = "0.2.0"
+	productVersion     = "0.2.1"
 	productDescription = "local repository review, bundling, and NotebookLM sync harness"
 	productHomeURL     = "https://paycaltech.com/clyde"
 	productHelpURL     = "https://paycaltech.com/clyde/help"

@@ -65,6 +65,37 @@ func TestBuildAgentPromptTruncatesUTF8SafelyAndPrioritizes(t *testing.T) {
 	}
 }
 
+func TestPrioritizeAgentChunksReusesAlreadyPrioritizedSlice(t *testing.T) {
+	chunks := []ChunkRecord{
+		{Path: "README.md"},
+		{Path: "cmd/clyde/main.go"},
+		{Path: "internal/clyde/agent.go"},
+	}
+
+	prioritized := prioritizeAgentChunks(chunks)
+
+	if &prioritized[0] != &chunks[0] {
+		t.Fatalf("expected already prioritized slice to be reused")
+	}
+}
+
+func TestPrioritizeAgentChunksSortsWhenNeeded(t *testing.T) {
+	chunks := []ChunkRecord{
+		{Path: "z.txt"},
+		{Path: "README.md"},
+		{Path: "internal/clyde/agent.go"},
+	}
+
+	prioritized := prioritizeAgentChunks(chunks)
+
+	if prioritized[0].Path != "README.md" {
+		t.Fatalf("expected README first, got %#v", prioritized)
+	}
+	if chunks[0].Path != "z.txt" {
+		t.Fatalf("expected original slice to remain unchanged, got %#v", chunks)
+	}
+}
+
 func TestSafePrefixEdgeCases(t *testing.T) {
 	if got := safePrefix("hello", 0); got != "" {
 		t.Fatalf("expected empty prefix, got %q", got)

@@ -51,7 +51,9 @@ func ScanRepo(repo string, include, exclude []string, maxFileBytes int64) (ScanR
 
 	result := ScanResult{Repo: abs}
 	candidates := candidatePaths(abs)
-	excludes := append(append([]string{}, defaultExcludes...), exclude...)
+	excludes := make([]string, 0, len(defaultExcludes)+len(exclude))
+	excludes = append(excludes, defaultExcludes...)
+	excludes = append(excludes, exclude...)
 	for _, path := range candidates {
 		rel, err := filepath.Rel(abs, path)
 		if err != nil {
@@ -116,13 +118,12 @@ func ScanRepo(repo string, include, exclude []string, maxFileBytes int64) (ScanR
 func candidatePaths(repo string) []string {
 	if _, err := os.Stat(filepath.Join(repo, ".git")); err == nil {
 		if out, ok := gitListFiles(repo); ok {
-			var paths []string
+			paths := make([]string, 0, strings.Count(out, "\n"))
 			for _, line := range strings.Split(out, "\n") {
 				if line != "" {
 					paths = append(paths, filepath.Join(repo, filepath.FromSlash(line)))
 				}
 			}
-			sort.Strings(paths)
 			return paths
 		}
 	}

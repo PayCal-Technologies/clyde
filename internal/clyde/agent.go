@@ -21,6 +21,13 @@ func BuildAgentPrompt(result ScanResult, chunks []ChunkRecord, opts AgentPromptO
 		maxChars = 24000
 	}
 	var b strings.Builder
+	if maxChars > 0 {
+		grow := maxChars
+		if grow > 64*1024 {
+			grow = 64 * 1024
+		}
+		b.Grow(grow)
+	}
 	b.WriteString("You are Clyde, a local coding feedback agent running through Ollama.\n")
 	b.WriteString("Give direct, practical engineering feedback. Prioritize correctness, missing tests, and operational risks.\n\n")
 	b.WriteString("User task:\n")
@@ -67,11 +74,29 @@ func BuildAgentPrompt(result ScanResult, chunks []ChunkRecord, opts AgentPromptO
 }
 
 func prioritizeAgentChunks(chunks []ChunkRecord) []ChunkRecord {
+	if agentChunksAlreadyPrioritized(chunks) {
+		return chunks
+	}
 	ordered := append([]ChunkRecord(nil), chunks...)
 	sort.SliceStable(ordered, func(i, j int) bool {
 		return agentPathRank(ordered[i].Path) < agentPathRank(ordered[j].Path)
 	})
 	return ordered
+}
+
+func agentChunksAlreadyPrioritized(chunks []ChunkRecord) bool {
+	if len(chunks) < 2 {
+		return true
+	}
+	previous := agentPathRank(chunks[0].Path)
+	for _, chunk := range chunks[1:] {
+		current := agentPathRank(chunk.Path)
+		if current < previous {
+			return false
+		}
+		previous = current
+	}
+	return true
 }
 
 func agentPathRank(path string) int {

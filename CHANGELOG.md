@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## v0.2.1 - 2026-08-22
+
+- Add a standard release procedure that starts with checking and committing any
+  uncommitted work before performance review, testing, tagging, and publishing.
+- Optimize source bundle chunk construction by using bounded builders for chunk
+  headers and text splitting.
+- Reduce repeated allocation during bundle manifest creation, scanner exclude
+  handling, and Git candidate path collection.
+- Avoid copying and sorting agent context chunks when they are already in
+  priority order.
+- Add focused tests for chunk splitting preservation and agent priority
+  fast-path behavior.
+
 ## v0.2.0 - 2026-08-22
 
 - Polish CLI help and examples for the Go command surface.

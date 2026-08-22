@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -46,11 +47,7 @@ func MakeChunks(result ScanResult, maxChunkChars int, bookTitle string) []ChunkR
 	for _, file := range result.Files {
 		pieces := splitText(file.Text, maxChunkChars)
 		for i, piece := range pieces {
-			header := "Repository: " + filepath.Base(result.Repo) + "\n"
-			if bookTitle != "" {
-				header += "Book: " + bookTitle + "\n"
-			}
-			header += "Path: " + file.Rel + "\nSHA-256: " + file.SHA256 + "\nChunk: " + itoa(int64(i+1)) + "/" + itoa(int64(len(pieces))) + "\n\n"
+			header := chunkHeader(result.Repo, bookTitle, file.Rel, file.SHA256, i+1, len(pieces))
 			chunks = append(chunks, ChunkRecord{
 				Path:       file.Rel,
 				SHA256:     file.SHA256,
@@ -79,6 +76,8 @@ func WriteBundle(result ScanResult, outDir string, maxChunkChars int, bookTitle,
 		FileCount:  len(result.Files),
 		ChunkCount: len(chunks),
 		TotalBytes: result.TotalBytes(),
+		Files:      make([]manifestFile, 0, len(result.Files)),
+		Skips:      make([]manifestSkip, 0, len(result.Skips)),
 	}
 	if bookTitle != "" || bookSlug != "" {
 		manifest.Book = &manifestBook{Title: bookTitle, Slug: bookSlug}
@@ -125,6 +124,29 @@ func WriteBundle(result ScanResult, outDir string, maxChunkChars int, bookTitle,
 	return manifest, nil
 }
 
+func chunkHeader(repo, bookTitle, path, sha256 string, index, total int) string {
+	var b strings.Builder
+	b.Grow(len(repo) + len(bookTitle) + len(path) + len(sha256) + 64)
+	b.WriteString("Repository: ")
+	b.WriteString(filepath.Base(repo))
+	b.WriteByte('\n')
+	if bookTitle != "" {
+		b.WriteString("Book: ")
+		b.WriteString(bookTitle)
+		b.WriteByte('\n')
+	}
+	b.WriteString("Path: ")
+	b.WriteString(path)
+	b.WriteString("\nSHA-256: ")
+	b.WriteString(sha256)
+	b.WriteString("\nChunk: ")
+	b.WriteString(itoa(int64(index)))
+	b.WriteByte('/')
+	b.WriteString(itoa(int64(total)))
+	b.WriteString("\n\n")
+	return b.String()
+}
+
 func splitText(text string, maxChunkChars int) []string {
 	if maxChunkChars <= 0 {
 		maxChunkChars = DefaultConfig().MaxChunkChars
@@ -133,7 +155,8 @@ func splitText(text string, maxChunkChars int) []string {
 		return []string{text}
 	}
 	var chunks []string
-	var current string
+	var current strings.Builder
+	current.Grow(maxChunkChars)
 	for len(text) > 0 {
 		next := text
 		if idx := stringsIndexByteLimit(text, '\n', maxChunkChars); idx >= 0 {
@@ -141,19 +164,20 @@ func splitText(text string, maxChunkChars int) []string {
 		} else if len(text) > maxChunkChars {
 			next = text[:maxChunkChars]
 		}
-		if len(current)+len(next) > maxChunkChars && current != "" {
-			chunks = append(chunks, current)
-			current = ""
+		if current.Len()+len(next) > maxChunkChars && current.Len() > 0 {
+			chunks = append(chunks, current.String())
+			current.Reset()
+			current.Grow(maxChunkChars)
 		}
 		if len(next) > maxChunkChars {
 			chunks = append(chunks, next)
 		} else {
-			current += next
+			current.WriteString(next)
 		}
 		text = text[len(next):]
 	}
-	if current != "" {
-		chunks = append(chunks, current)
+	if current.Len() > 0 {
+		chunks = append(chunks, current.String())
 	}
 	return chunks
 }
