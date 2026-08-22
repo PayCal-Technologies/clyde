@@ -149,11 +149,12 @@ func TestHelpJSONPrintsCommandCatalog(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.Product != productName || len(payload.Commands) != 17 {
+	if payload.Product != productName || len(payload.Commands) != 18 {
 		t.Fatalf("unexpected catalog: %#v", payload)
 	}
 	foundHelp := false
 	foundConfigInit := false
+	foundDoctor := false
 	for _, command := range payload.Commands {
 		if command.Name == "help" && command.Syntax != "" && len(command.Examples) > 0 {
 			foundHelp = true
@@ -161,8 +162,11 @@ func TestHelpJSONPrintsCommandCatalog(t *testing.T) {
 		if command.Name == "config init" && command.Access == "Writes local config" {
 			foundConfigInit = true
 		}
+		if command.Name == "doctor" && command.Category == "Diagnostics" {
+			foundDoctor = true
+		}
 	}
-	if !foundHelp || !foundConfigInit {
+	if !foundHelp || !foundConfigInit || !foundDoctor {
 		t.Fatalf("expected commands missing from catalog: %#v", payload.Commands)
 	}
 }
@@ -179,7 +183,9 @@ func TestHelpDoesNotRequireValidConfig(t *testing.T) {
 		{"preview", "--help"},
 		{"bundle", "--help"},
 		{"sync", "--help"},
+		{"doctor", "--help"},
 		{"help", "agent"},
+		{"help", "doctor"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			var out, errOut bytes.Buffer
@@ -192,6 +198,66 @@ func TestHelpDoesNotRequireValidConfig(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDoctorReportsEnvironmentJSON(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "app.go"), "package main\n")
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("CLYDE_CONFIG", configPath)
+	mustWrite(t, configPath, `{"ollama_url":"http://127.0.0.1:1","model":"qwen2.5-coder:7b","ollama_timeout_seconds":1}`)
+
+	var out, errOut bytes.Buffer
+	status := Main([]string{"doctor", dir, "--json", "--ollama-timeout", "0.01"}, &out, &errOut)
+
+	if status != 0 {
+		t.Fatalf("status=%d stderr=%s out=%s", status, errOut.String(), out.String())
+	}
+	var payload doctorReport
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Product != productName || payload.Version != productVersion {
+		t.Fatalf("unexpected doctor payload: %#v", payload)
+	}
+	if !doctorPayloadHas(payload, "repo", "ok") {
+		t.Fatalf("expected ok repo check: %#v", payload.Checks)
+	}
+	if !doctorPayloadHas(payload, "ollama", "warn") {
+		t.Fatalf("expected warning ollama check: %#v", payload.Checks)
+	}
+}
+
+func TestDoctorReportsInvalidConfig(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("CLYDE_CONFIG", configPath)
+	mustWrite(t, configPath, `{"ollama_url":"not-a-url"}`)
+
+	var out, errOut bytes.Buffer
+	status := Main([]string{"doctor", "--json", "--ollama-timeout", "0.01"}, &out, &errOut)
+
+	if status != 1 {
+		t.Fatalf("expected failure, got status=%d out=%s", status, out.String())
+	}
+	if !strings.Contains(errOut.String(), "doctor found errors") {
+		t.Fatalf("unexpected stderr: %s", errOut.String())
+	}
+	var payload doctorReport
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !doctorPayloadHas(payload, "config", "error") {
+		t.Fatalf("expected config error: %#v", payload.Checks)
+	}
+}
+
+func doctorPayloadHas(report doctorReport, name, status string) bool {
+	for _, check := range report.Checks {
+		if check.Name == name && check.Status == status {
+			return true
+		}
+	}
+	return false
 }
 
 func TestTopLevelHelpIncludesProductLinks(t *testing.T) {

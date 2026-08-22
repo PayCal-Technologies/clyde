@@ -9,14 +9,16 @@ import (
 	"math"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
 
 const (
 	productName        = "Clyde"
-	productVersion     = "0.2.2"
+	productVersion     = "0.2.3"
 	productDescription = "local repository review, bundling, and NotebookLM sync harness"
 	productHomeURL     = "https://paycaltech.com/clyde"
 	productHelpURL     = "https://paycaltech.com/clyde/help"
@@ -74,6 +76,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return cmdHelp(args[1:], stdin, stdout, stderr)
 	case "completion":
 		return cmdCompletion(args[1:], stdout)
+	case "doctor":
+		return cmdDoctor(args[1:], stdout)
 	case "tui":
 		return RunTUI(stdin, stdout, stderr)
 	case "config":
@@ -415,6 +419,141 @@ func cmdStatus(args []string, out io.Writer) error {
 	}
 }
 
+type doctorCheck struct {
+	Name    string `json:"name"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
+type doctorReport struct {
+	Product string        `json:"product"`
+	Version string        `json:"version"`
+	OS      string        `json:"os"`
+	Arch    string        `json:"arch"`
+	Checks  []doctorCheck `json:"checks"`
+}
+
+func cmdDoctor(args []string, out io.Writer) error {
+	if isHelpArgs(args) {
+		printDoctorHelp(out)
+		return flag.ErrHelp
+	}
+	cfg := DefaultConfig()
+	configPath, pathErr := ConfigPath()
+	loaded, loadedPath, configErr := LoadConfig()
+	if configErr == nil {
+		cfg = loaded
+		if loadedPath != "" {
+			configPath = loadedPath
+		}
+	}
+	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	fs.SetOutput(out)
+	jsonOut := fs.Bool("json", false, "print machine-readable diagnostics")
+	ollamaTimeout := fs.Float64("ollama-timeout", 2, "seconds to wait for local Ollama diagnostics")
+	if err := fs.Parse(interspersedArgs(args, map[string]bool{"json": true})); err != nil {
+		return err
+	}
+	if fs.NArg() > 1 {
+		return errf("doctor accepts at most one optional REPO")
+	}
+	if err := validatePositiveSeconds("ollama-timeout", *ollamaTimeout); err != nil {
+		return err
+	}
+	report := doctorReport{
+		Product: productName,
+		Version: productVersion,
+		OS:      runtime.GOOS,
+		Arch:    runtime.GOARCH,
+	}
+	report.Checks = append(report.Checks, doctorCheck{Name: "version", Status: "ok", Message: productName + " " + productVersion})
+	report.Checks = append(report.Checks, doctorCheck{Name: "platform", Status: "ok", Message: runtime.GOOS + "/" + runtime.GOARCH})
+	if pathErr != nil {
+		report.Checks = append(report.Checks, doctorCheck{Name: "config", Status: "error", Message: pathErr.Error()})
+	} else if configErr != nil {
+		report.Checks = append(report.Checks, doctorCheck{Name: "config", Status: "error", Message: configPath + ": " + configErr.Error()})
+	} else if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		report.Checks = append(report.Checks, doctorCheck{Name: "config", Status: "warn", Message: "no config file at " + configPath + "; using defaults"})
+	} else {
+		report.Checks = append(report.Checks, doctorCheck{Name: "config", Status: "ok", Message: "loaded " + configPath})
+	}
+	report.Checks = append(report.Checks, doctorExecutableCheck("git", "fast repository file discovery"))
+	report.Checks = append(report.Checks, doctorExecutableCheck("npx", "default NotebookLM MCP backend"))
+	report.Checks = append(report.Checks, doctorExecutableCheck("nlm", "optional NotebookLM CLI backend"))
+	report.Checks = append(report.Checks, doctorOllamaCheck(cfg, time.Duration(*ollamaTimeout*float64(time.Second))))
+	if fs.NArg() == 1 {
+		report.Checks = append(report.Checks, doctorRepoCheck(fs.Arg(0), cfg))
+	}
+	if *jsonOut {
+		data, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(out, string(data))
+		return doctorResultError(report)
+	}
+	printDoctorReport(out, report)
+	return doctorResultError(report)
+}
+
+func doctorExecutableCheck(name, purpose string) doctorCheck {
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return doctorCheck{Name: name, Status: "warn", Message: name + " not found on PATH; " + purpose + " may be unavailable"}
+	}
+	return doctorCheck{Name: name, Status: "ok", Message: path}
+}
+
+func doctorOllamaCheck(cfg Config, timeout time.Duration) doctorCheck {
+	if err := validateOllamaURL(cfg.OllamaURL); err != nil {
+		return doctorCheck{Name: "ollama", Status: "error", Message: err.Error()}
+	}
+	client := NewOllamaClient(cfg.OllamaURL, timeout)
+	models, err := client.ListModels(context.Background())
+	if err != nil {
+		return doctorCheck{Name: "ollama", Status: "warn", Message: err.Error()}
+	}
+	if len(models) == 0 {
+		return doctorCheck{Name: "ollama", Status: "warn", Message: "reachable at " + client.BaseURL + " but no models are installed"}
+	}
+	selected, _ := SelectModel("", cfg, models)
+	return doctorCheck{Name: "ollama", Status: "ok", Message: "reachable at " + client.BaseURL + "; selected model " + selected}
+}
+
+func doctorRepoCheck(repo string, cfg Config) doctorCheck {
+	result, err := ScanRepo(repo, nil, nil, cfg.MaxFileBytes)
+	if err != nil {
+		return doctorCheck{Name: "repo", Status: "error", Message: err.Error()}
+	}
+	chunks := MakeChunks(result, cfg.MaxChunkChars, "")
+	status := "ok"
+	if len(result.Files) == 0 {
+		status = "warn"
+	}
+	return doctorCheck{
+		Name:   "repo",
+		Status: status,
+		Message: fmt.Sprintf("%d files, %d skips, %d chunks, %s total",
+			len(result.Files), len(result.Skips), len(chunks), formatBytes(result.TotalBytes())),
+	}
+}
+
+func printDoctorReport(out io.Writer, report doctorReport) {
+	fmt.Fprintf(out, "%s doctor %s (%s/%s)\n", report.Product, report.Version, report.OS, report.Arch)
+	for _, check := range report.Checks {
+		fmt.Fprintf(out, "%s %s: %s\n", strings.ToUpper(check.Status), check.Name, check.Message)
+	}
+}
+
+func doctorResultError(report doctorReport) error {
+	for _, check := range report.Checks {
+		if check.Status == "error" {
+			return errf("doctor found errors")
+		}
+	}
+	return nil
+}
+
 func cmdBook(args []string, out io.Writer) error {
 	if isHelpArgs(args) {
 		printBookHelp(out)
@@ -637,7 +776,7 @@ func cmdAgent(args []string, stdin io.Reader, out io.Writer) error {
 }
 
 func printHelp(out io.Writer) {
-	fmt.Fprintln(out, "usage: clyde {about,help,completion,tui,config,preview,bundle,sync,daemon,status,book,models,ask,agent} ...")
+	fmt.Fprintln(out, "usage: clyde {about,help,completion,doctor,tui,config,preview,bundle,sync,daemon,status,book,models,ask,agent} ...")
 	fmt.Fprintln(out, "run clyde with no arguments in a terminal to open the TUI")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "examples:")
@@ -648,6 +787,7 @@ func printHelp(out io.Writer) {
 	fmt.Fprintln(out, "  clyde completion zsh > /opt/homebrew/share/zsh/site-functions/_clyde")
 	fmt.Fprintln(out, "  clyde completion powershell | Out-String | Invoke-Expression")
 	fmt.Fprintln(out, "  clyde completion nushell > clyde-completions.nu")
+	fmt.Fprintln(out, "  clyde doctor . --json")
 	fmt.Fprintln(out, "  clyde models")
 	fmt.Fprintln(out, "  clyde config show")
 	fmt.Fprintln(out, "  clyde ask --model qwen2.5-coder:7b --stdin")
@@ -671,6 +811,7 @@ var commandCatalog = []commandInfo{
 	{Name: "about", Category: "Core", Summary: "Show Clyde product details and official links.", Access: "Read-only", Network: "None", Syntax: "clyde --about\nclyde about", Examples: []string{"clyde --about", "clyde about"}},
 	{Name: "help", Category: "Core", Summary: "Show human-readable help or a JSON command catalog.", Access: "Read-only", Network: "None", Syntax: "clyde help [--json|COMMAND]", Examples: []string{"clyde help", "clyde help agent", "clyde help --json"}},
 	{Name: "completion", Category: "Packaging", Summary: "Generate shell completion for Bash, Zsh, Fish, PowerShell, Elvish, Nushell, Xonsh, Tcsh, Clink, Yash, or Oil.", Access: "Read-only", Network: "None", Syntax: "clyde completion {bash|zsh|fish|powershell|pwsh|elvish|nushell|nu|xonsh|tcsh|clink|yash|oil|osh|ysh}", Examples: []string{"clyde completion zsh > /opt/homebrew/share/zsh/site-functions/_clyde", "clyde completion powershell | Out-String | Invoke-Expression", "clyde completion nushell > clyde-completions.nu"}},
+	{Name: "doctor", Category: "Diagnostics", Summary: "Check Clyde configuration, platform, PATH tools, Ollama, and optional repo scan readiness.", Access: "Read-only", Network: "Local Ollama", Syntax: "clyde doctor [REPO] [--json] [--ollama-timeout SECONDS]", Examples: []string{"clyde doctor", "clyde doctor . --json"}},
 	{Name: "tui", Category: "Interactive", Summary: "Open Clyde's dependency-free terminal UI.", Access: "Local interactive", Network: "Optional local Ollama", Syntax: "clyde tui", Examples: []string{"clyde", "clyde tui"}},
 	{Name: "config", Category: "Configuration", Summary: "Show, initialize, or print the Clyde configuration path.", Access: "Reads or writes local config", Network: "None", Syntax: "clyde config {show|init|path}", Examples: []string{"clyde config show", "clyde config init", "clyde config path"}},
 	{Name: "config init", Category: "Configuration", Summary: "Write Clyde's default configuration file.", Access: "Writes local config", Network: "None", Syntax: "clyde config init", Examples: []string{"clyde config init"}},
@@ -725,6 +866,9 @@ func cmdHelp(args []string, stdin io.Reader, out, errOut io.Writer) error {
 	case "completion":
 		printCompletionHelp(out)
 		return nil
+	case "doctor":
+		printDoctorHelp(out)
+		return nil
 	case "config":
 		printConfigHelp(out)
 		return nil
@@ -766,6 +910,17 @@ func printCompletionHelp(out io.Writer) {
 	fmt.Fprintln(out, "  clyde completion clink > %LOCALAPPDATA%\\clink\\clyde.lua")
 	fmt.Fprintln(out, "  clyde completion yash >> ~/.yashrc")
 	fmt.Fprintln(out, "  clyde completion oil > ~/.config/oils/clyde-completions.sh")
+}
+
+func printDoctorHelp(out io.Writer) {
+	fmt.Fprintln(out, "usage: clyde doctor [repo] [--json] [--ollama-timeout seconds]")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Check Clyde's local environment without uploading data.")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "examples:")
+	fmt.Fprintln(out, "  clyde doctor")
+	fmt.Fprintln(out, "  clyde doctor .")
+	fmt.Fprintln(out, "  clyde doctor . --json")
 }
 
 func printConfigHelp(out io.Writer) {
@@ -1160,7 +1315,7 @@ _clyde_completion() {
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  commands="about help completion tui config preview bundle sync daemon status book models ask agent"
+  commands="about help completion doctor tui config preview bundle sync daemon status book models ask agent"
 
   if [[ ${COMP_CWORD} -eq 1 ]]; then
     COMPREPLY=( $(compgen -W "${commands}" -- "${cur}") )
@@ -1172,7 +1327,10 @@ _clyde_completion() {
       COMPREPLY=( $(compgen -W "bash zsh fish powershell pwsh elvish nushell nu xonsh tcsh clink yash oil osh ysh" -- "${cur}") )
       ;;
     help)
-      COMPREPLY=( $(compgen -W "about help completion tui config preview bundle sync daemon status book models ask agent --json" -- "${cur}") )
+      COMPREPLY=( $(compgen -W "about help completion doctor tui config preview bundle sync daemon status book models ask agent --json" -- "${cur}") )
+      ;;
+    doctor)
+      COMPREPLY=( $(compgen -W "--json --ollama-timeout --help" -- "${cur}") )
       ;;
     config)
       COMPREPLY=( $(compgen -W "path show init" -- "${cur}") )
@@ -1213,6 +1371,7 @@ _clyde() {
     'about:show product details and links'
     'help:show command help or JSON command catalog'
     'completion:print shell completion script'
+    'doctor:check local Clyde environment'
     'tui:open the terminal UI'
     'config:manage Clyde config'
     'preview:show files Clyde would scan'
@@ -1237,7 +1396,8 @@ _clyde() {
     args)
       case $words[2] in
         completion) _values 'shell' bash zsh fish powershell pwsh elvish nushell nu xonsh tcsh clink yash oil osh ysh ;;
-        help) _values 'command' about help completion tui config preview bundle sync daemon status book models ask agent --json ;;
+        help) _values 'command' about help completion doctor tui config preview bundle sync daemon status book models ask agent --json ;;
+        doctor) _arguments '--json' '--ollama-timeout=[]' '--help' ;;
         config) _values 'config command' path show init ;;
         preview) _arguments '--include=[]' '--exclude=[]' '--max-file-bytes=[]' '--max-chunk-chars=[]' '--show-files=[]' '--show-skips=[]' '--json' '--help' ;;
         bundle) _arguments '--out=[]' '--subject=[]' '--book-title=[]' '--include=[]' '--exclude=[]' '--max-file-bytes=[]' '--max-chunk-chars=[]' '--help' ;;
@@ -1256,9 +1416,11 @@ _clyde "$@"
 
 const fishCompletionScript = `# fish completion for clyde
 complete -c clyde -f
-complete -c clyde -n "__fish_use_subcommand" -a "about help completion tui config preview bundle sync daemon status book models ask agent"
+complete -c clyde -n "__fish_use_subcommand" -a "about help completion doctor tui config preview bundle sync daemon status book models ask agent"
 complete -c clyde -n "__fish_seen_subcommand_from completion" -a "bash zsh fish powershell pwsh elvish nushell nu xonsh tcsh clink yash oil osh ysh"
-complete -c clyde -n "__fish_seen_subcommand_from help" -a "about help completion tui config preview bundle sync daemon status book models ask agent --json"
+complete -c clyde -n "__fish_seen_subcommand_from help" -a "about help completion doctor tui config preview bundle sync daemon status book models ask agent --json"
+complete -c clyde -n "__fish_seen_subcommand_from doctor" -l json
+complete -c clyde -n "__fish_seen_subcommand_from doctor" -l ollama-timeout -r
 complete -c clyde -n "__fish_seen_subcommand_from config" -a "path show init"
 complete -c clyde -n "__fish_seen_subcommand_from preview" -l include -r
 complete -c clyde -n "__fish_seen_subcommand_from preview" -l exclude -r
@@ -1298,13 +1460,14 @@ Register-ArgumentCompleter -Native -CommandName clyde -ScriptBlock {
   param($wordToComplete, $commandAst, $cursorPosition)
 
   $commands = @(
-    'about', 'help', 'completion', 'tui', 'config', 'preview', 'bundle',
+    'about', 'help', 'completion', 'doctor', 'tui', 'config', 'preview', 'bundle',
     'sync', 'daemon', 'status', 'book', 'models', 'ask', 'agent'
   )
   $commandDescriptions = @{
     about = 'show product details and links'
     help = 'show command help or JSON command catalog'
     completion = 'print shell completion script'
+    doctor = 'check local Clyde environment'
     tui = 'open the terminal UI'
     config = 'manage Clyde config'
     preview = 'show files Clyde would scan'
@@ -1319,11 +1482,12 @@ Register-ArgumentCompleter -Native -CommandName clyde -ScriptBlock {
   }
   $subcommands = @{
 		completion = @('bash', 'zsh', 'fish', 'powershell', 'pwsh', 'elvish', 'nushell', 'nu', 'xonsh', 'tcsh', 'clink', 'yash', 'oil', 'osh', 'ysh')
-    help = @('about', 'help', 'completion', 'tui', 'config', 'preview', 'bundle', 'sync', 'daemon', 'status', 'book', 'models', 'ask', 'agent', '--json')
+    help = @('about', 'help', 'completion', 'doctor', 'tui', 'config', 'preview', 'bundle', 'sync', 'daemon', 'status', 'book', 'models', 'ask', 'agent', '--json')
     config = @('path', 'show', 'init')
   }
   $flags = @{
     preview = @('--include', '--exclude', '--max-file-bytes', '--max-chunk-chars', '--show-files', '--show-skips', '--json', '--help')
+    doctor = @('--json', '--ollama-timeout', '--help')
     bundle = @('--out', '--subject', '--book-title', '--include', '--exclude', '--max-file-bytes', '--max-chunk-chars', '--help')
     sync = @('--notebook-id', '--notebook-url', '--approve-upload', '--backend', '--mcp-command', '--nlm-command', '--delete-existing-sources', '--mcp-timeout', '--status-url', '--quiet-progress', '--job-id', '--subject', '--book-title', '--include', '--exclude', '--max-file-bytes', '--max-chunk-chars', '--help')
     models = @('--ollama-url', '--timeout', '--json', '--help')
@@ -1364,12 +1528,13 @@ Register-ArgumentCompleter -Native -CommandName clyde -ScriptBlock {
 
 const elvishCompletionScript = `# Elvish completion for clyde
 edit:completion:arg-completer[clyde] = [@words]{
-  var commands = [about help completion tui config preview bundle sync daemon status book models ask agent]
+  var commands = [about help completion doctor tui config preview bundle sync daemon status book models ask agent]
   var shells = [bash zsh fish powershell pwsh elvish nushell nu xonsh tcsh clink yash oil osh ysh]
   var config-subcommands = [path show init]
   var common-scan-flags = [--include --exclude --max-file-bytes --max-chunk-chars]
   var flags = [
     &preview=[--include --exclude --max-file-bytes --max-chunk-chars --show-files --show-skips --json --help]
+    &doctor=[--json --ollama-timeout --help]
     &bundle=[--out --subject --book-title --include --exclude --max-file-bytes --max-chunk-chars --help]
     &sync=[--notebook-id --notebook-url --approve-upload --backend --mcp-command --nlm-command --delete-existing-sources --mcp-timeout --status-url --quiet-progress --job-id --subject --book-title --include --exclude --max-file-bytes --max-chunk-chars --help]
     &models=[--ollama-url --timeout --json --help]
@@ -1385,7 +1550,7 @@ edit:completion:arg-completer[clyde] = [@words]{
   } elif (== $words[1] completion) {
     set choices = $shells
   } elif (== $words[1] help) {
-    set choices = [about help completion tui config preview bundle sync daemon status book models ask agent --json]
+    set choices = [about help completion doctor tui config preview bundle sync daemon status book models ask agent --json]
   } elif (== $words[1] config) {
     set choices = $config-subcommands
   } elif (has-key $flags $words[1]) {
@@ -1403,7 +1568,7 @@ edit:completion:arg-completer[clyde] = [@words]{
 
 const nushellCompletionScript = `# Nushell completion for clyde
 def "nu-complete clyde commands" [] {
-  [about help completion tui config preview bundle sync daemon status book models ask agent]
+  [about help completion doctor tui config preview bundle sync daemon status book models ask agent]
 }
 
 def "nu-complete clyde shells" [] {
@@ -1428,6 +1593,7 @@ extern "clyde" [
   --show-files: int
   --show-skips: int
   --json
+  --ollama-timeout: int
   --out: string
   --subject: string
   --book-title: string
@@ -1462,7 +1628,7 @@ const xonshCompletionScript = `# Xonsh completion for clyde
 from xonsh.completers.completer import add_one_completer
 
 _CLYDE_COMMANDS = {
-    'about', 'help', 'completion', 'tui', 'config', 'preview', 'bundle',
+    'about', 'help', 'completion', 'doctor', 'tui', 'config', 'preview', 'bundle',
     'sync', 'daemon', 'status', 'book', 'models', 'ask', 'agent',
 }
 _CLYDE_SHELLS = {
@@ -1471,6 +1637,7 @@ _CLYDE_SHELLS = {
 }
 _CLYDE_FLAGS = {
     'preview': {'--include', '--exclude', '--max-file-bytes', '--max-chunk-chars', '--show-files', '--show-skips', '--json', '--help'},
+    'doctor': {'--json', '--ollama-timeout', '--help'},
     'bundle': {'--out', '--subject', '--book-title', '--include', '--exclude', '--max-file-bytes', '--max-chunk-chars', '--help'},
     'sync': {'--notebook-id', '--notebook-url', '--approve-upload', '--backend', '--mcp-command', '--nlm-command', '--delete-existing-sources', '--mcp-timeout', '--status-url', '--quiet-progress', '--job-id', '--subject', '--book-title', '--include', '--exclude', '--max-file-bytes', '--max-chunk-chars', '--help'},
     'models': {'--ollama-url', '--timeout', '--json', '--help'},
@@ -1504,17 +1671,17 @@ add_one_completer('clyde', _clyde_completer, 'start')
 
 const tcshCompletionScript = `# tcsh completion for clyde
 complete clyde \
-  'p/1/(about help completion tui config preview bundle sync daemon status book models ask agent)/' \
+  'p/1/(about help completion doctor tui config preview bundle sync daemon status book models ask agent)/' \
   'n/completion/(bash zsh fish powershell pwsh elvish nushell nu xonsh tcsh clink yash oil osh ysh)/' \
-  'n/help/(about help completion tui config preview bundle sync daemon status book models ask agent --json)/' \
+  'n/help/(about help completion doctor tui config preview bundle sync daemon status book models ask agent --json)/' \
   'n/config/(path show init)/' \
   'n/--backend/(mcp nlm)/' \
-  'c/--/(--include --exclude --max-file-bytes --max-chunk-chars --show-files --show-skips --json --out --subject --book-title --notebook-id --notebook-url --approve-upload --backend --mcp-command --nlm-command --delete-existing-sources --mcp-timeout --status-url --quiet-progress --job-id --model --ollama-url --timeout --num-ctx --no-stream --prompt-file --stdin --allow-remote-ollama --host --port --watch --interval --help)/'
+  'c/--/(--include --exclude --max-file-bytes --max-chunk-chars --show-files --show-skips --json --ollama-timeout --out --subject --book-title --notebook-id --notebook-url --approve-upload --backend --mcp-command --nlm-command --delete-existing-sources --mcp-timeout --status-url --quiet-progress --job-id --model --ollama-url --timeout --num-ctx --no-stream --prompt-file --stdin --allow-remote-ollama --host --port --watch --interval --help)/'
 `
 
 const clinkCompletionScript = `-- Clink completion for clyde
 local commands = {
-  "about", "help", "completion", "tui", "config", "preview", "bundle",
+  "about", "help", "completion", "doctor", "tui", "config", "preview", "bundle",
   "sync", "daemon", "status", "book", "models", "ask", "agent"
 }
 local shells = {
@@ -1529,7 +1696,7 @@ local flags = {
   "--mcp-timeout", "--status-url", "--quiet-progress", "--job-id", "--model",
   "--ollama-url", "--timeout", "--num-ctx", "--no-stream", "--prompt-file",
   "--stdin", "--allow-remote-ollama", "--host", "--port", "--watch",
-  "--interval", "--help"
+  "--interval", "--ollama-timeout", "--help"
 }
 
 local parser = clink.argmatcher("clyde")
@@ -1545,7 +1712,7 @@ parser:addarg({
     elseif command == "completion" then
       choices = shells
     elseif command == "help" then
-      choices = {"about", "help", "completion", "tui", "config", "preview", "bundle", "sync", "daemon", "status", "book", "models", "ask", "agent", "--json"}
+      choices = {"about", "help", "completion", "doctor", "tui", "config", "preview", "bundle", "sync", "daemon", "status", "book", "models", "ask", "agent", "--json"}
     elseif command == "config" then
       choices = {"path", "show", "init"}
     end
@@ -1568,10 +1735,10 @@ function completion//argument/clyde {
   local candidates
   case "$command:$previous" in
     completion:*) candidates="bash zsh fish powershell pwsh elvish nushell nu xonsh tcsh clink yash oil osh ysh" ;;
-    help:*) candidates="about help completion tui config preview bundle sync daemon status book models ask agent --json" ;;
+    help:*) candidates="about help completion doctor tui config preview bundle sync daemon status book models ask agent --json" ;;
     config:*) candidates="path show init" ;;
     *:--backend) candidates="mcp nlm" ;;
-    *) candidates="about help completion tui config preview bundle sync daemon status book models ask agent --include --exclude --max-file-bytes --max-chunk-chars --show-files --show-skips --json --out --subject --book-title --notebook-id --notebook-url --approve-upload --backend --mcp-command --nlm-command --delete-existing-sources --mcp-timeout --status-url --quiet-progress --job-id --model --ollama-url --timeout --num-ctx --no-stream --prompt-file --stdin --allow-remote-ollama --host --port --watch --interval --help" ;;
+    *) candidates="about help completion doctor tui config preview bundle sync daemon status book models ask agent --include --exclude --max-file-bytes --max-chunk-chars --show-files --show-skips --json --ollama-timeout --out --subject --book-title --notebook-id --notebook-url --approve-upload --backend --mcp-command --nlm-command --delete-existing-sources --mcp-timeout --status-url --quiet-progress --job-id --model --ollama-url --timeout --num-ctx --no-stream --prompt-file --stdin --allow-remote-ollama --host --port --watch --interval --help" ;;
   esac
   for candidate in $candidates; do
     case "$candidate" in

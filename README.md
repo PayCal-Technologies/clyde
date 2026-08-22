@@ -3,7 +3,7 @@
 Clyde is a small Go MCP-client harness for moving auditable repository source bundles
 into Google NotebookLM.
 
-Current version: `0.2.2`
+Current version: `0.2.3`
 
 Official resources:
 
@@ -92,6 +92,7 @@ clyde help
 clyde help agent
 clyde help --json
 clyde --about
+clyde doctor
 ```
 
 Generate shell completion:
@@ -132,6 +133,22 @@ Help surfaces are designed for both humans and automation:
   categories, summaries, access level, network behavior, syntax, and examples.
 - `clyde --about` and `clyde about` print product links for the official
   homepage, help site, GitHub repository, and PayCal Technologies.
+- `clyde doctor` prints read-only environment diagnostics. Use
+  `clyde doctor --json` or `clyde doctor /path/to/repo --json` for automation
+  and AI-readable troubleshooting.
+
+Doctor checks:
+
+```bash
+clyde doctor
+clyde doctor /path/to/repo
+clyde doctor /path/to/repo --json
+```
+
+The diagnostic report covers Clyde's version, OS/architecture, config file
+status, PATH availability for Git, `npx`, and `nlm`, local Ollama reachability,
+and optional repository scan readiness. It does not upload source or modify
+local files.
 
 By default Clyde reads `~/.config/clyde/config.json`. Set `CLYDE_CONFIG` to use
 a different file. CLI flags override environment variables, environment

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v0.2.3 - 2026-08-22
+
+- Add `clyde doctor` for read-only environment diagnostics across version,
+  platform, config, PATH dependencies, local Ollama, and optional repo scan
+  readiness.
+- Add `clyde doctor --json` for AI-ready diagnostics and automation.
+- Wire `doctor` into help, the JSON command catalog, and shell completions.
+
 ## v0.2.2 - 2026-08-22
 
 - Add PowerShell completion support for Windows and cross-platform `pwsh`.
