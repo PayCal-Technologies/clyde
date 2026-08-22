@@ -44,6 +44,56 @@ func TestPreviewJSON(t *testing.T) {
 	}
 }
 
+func TestScanReportJSON(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "small.go"), "package main\n")
+	mustWrite(t, filepath.Join(dir, "large.md"), strings.Repeat("x", 80))
+	mustWrite(t, filepath.Join(dir, "secret.env"), "API_KEY='abcdefghijklmnopqrstuvwxyz123456'\n")
+
+	var out, errOut bytes.Buffer
+	status := Main([]string{"scan-report", dir, "--json", "--top", "1"}, &out, &errOut)
+
+	if status != 0 {
+		t.Fatalf("status=%d stderr=%s", status, errOut.String())
+	}
+	var payload scanReport
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.IncludedFiles != 2 || payload.SkippedFiles != 1 || payload.ChunkCount == 0 {
+		t.Fatalf("unexpected scan report: %#v", payload)
+	}
+	if len(payload.TopFiles) != 1 || payload.TopFiles[0].Path != "large.md" {
+		t.Fatalf("unexpected top files: %#v", payload.TopFiles)
+	}
+	if !scanReportCountHas(payload.SkipReasons, "possible secret material", 1) {
+		t.Fatalf("missing skip reason: %#v", payload.SkipReasons)
+	}
+	if !scanReportCountHas(payload.ExtensionStats, ".go", 1) || !scanReportCountHas(payload.ExtensionStats, ".md", 1) {
+		t.Fatalf("missing extension stats: %#v", payload.ExtensionStats)
+	}
+}
+
+func TestScanReportRejectsNegativeTop(t *testing.T) {
+	var out, errOut bytes.Buffer
+	status := Main([]string{"scan-report", ".", "--top", "-1"}, &out, &errOut)
+	if status != 1 {
+		t.Fatalf("expected failure")
+	}
+	if !strings.Contains(errOut.String(), "--top must be zero or greater") {
+		t.Fatalf("unexpected stderr: %s", errOut.String())
+	}
+}
+
+func scanReportCountHas(items []scanReportCount, name string, count int) bool {
+	for _, item := range items {
+		if item.Name == name && item.Count == count {
+			return true
+		}
+	}
+	return false
+}
+
 func TestBundleWritesManifest(t *testing.T) {
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, "app.go"), "package main\n")
@@ -149,12 +199,13 @@ func TestHelpJSONPrintsCommandCatalog(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.Product != productName || len(payload.Commands) != 18 {
+	if payload.Product != productName || len(payload.Commands) != 19 {
 		t.Fatalf("unexpected catalog: %#v", payload)
 	}
 	foundHelp := false
 	foundConfigInit := false
 	foundDoctor := false
+	foundScanReport := false
 	for _, command := range payload.Commands {
 		if command.Name == "help" && command.Syntax != "" && len(command.Examples) > 0 {
 			foundHelp = true
@@ -165,8 +216,11 @@ func TestHelpJSONPrintsCommandCatalog(t *testing.T) {
 		if command.Name == "doctor" && command.Category == "Diagnostics" {
 			foundDoctor = true
 		}
+		if command.Name == "scan-report" && command.Category == "Repository Bundles" {
+			foundScanReport = true
+		}
 	}
-	if !foundHelp || !foundConfigInit || !foundDoctor {
+	if !foundHelp || !foundConfigInit || !foundDoctor || !foundScanReport {
 		t.Fatalf("expected commands missing from catalog: %#v", payload.Commands)
 	}
 }
@@ -181,11 +235,13 @@ func TestHelpDoesNotRequireValidConfig(t *testing.T) {
 		{"ask", "--help"},
 		{"models", "--help"},
 		{"preview", "--help"},
+		{"scan-report", "--help"},
 		{"bundle", "--help"},
 		{"sync", "--help"},
 		{"doctor", "--help"},
 		{"help", "agent"},
 		{"help", "doctor"},
+		{"help", "scan-report"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			var out, errOut bytes.Buffer

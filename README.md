@@ -3,7 +3,7 @@
 Clyde is a small Go MCP-client harness for moving auditable repository source bundles
 into Google NotebookLM.
 
-Current version: `0.2.3`
+Current version: `0.2.4`
 
 Official resources:
 
@@ -93,6 +93,7 @@ clyde help agent
 clyde help --json
 clyde --about
 clyde doctor
+clyde scan-report .
 ```
 
 Generate shell completion:
@@ -149,6 +150,20 @@ The diagnostic report covers Clyde's version, OS/architecture, config file
 status, PATH availability for Git, `npx`, and `nlm`, local Ollama reachability,
 and optional repository scan readiness. It does not upload source or modify
 local files.
+
+Repository scan reports:
+
+```bash
+clyde scan-report /path/to/repo
+clyde scan-report /path/to/repo --json
+clyde scan-report /path/to/repo --include "internal/**/*.go" --top 20
+```
+
+`scan-report` is read-only and summarizes the shape of Clyde's repository scan:
+included/skipped counts, chunk count, largest included files, extension counts,
+skip reasons, and scan limits. Use the JSON form when an AI assistant or CI job
+needs compact repository-shape context without creating a bundle or uploading
+data.
 
 By default Clyde reads `~/.config/clyde/config.json`. Set `CLYDE_CONFIG` to use
 a different file. CLI flags override environment variables, environment

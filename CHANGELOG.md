@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v0.2.4 - 2026-08-22
+
+- Add `clyde scan-report` for read-only repository scan summaries with largest
+  files, extension counts, skip reasons, chunk counts, and scan limits.
+- Add `clyde scan-report --json` for AI-ready repository shape diagnostics.
+- Wire `scan-report` into help, the JSON command catalog, and shell
+  completions.
+
 ## v0.2.3 - 2026-08-22
 
 - Add `clyde doctor` for read-only environment diagnostics across version,
