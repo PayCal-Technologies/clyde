@@ -1,5 +1,11 @@
 # Clyde
 
+[![Tests](https://github.com/PayCal-Technologies/clyde/actions/workflows/test.yml/badge.svg)](https://github.com/PayCal-Technologies/clyde/actions/workflows/test.yml)
+[![GitHub release](https://img.shields.io/github/v/release/PayCal-Technologies/clyde)](https://github.com/PayCal-Technologies/clyde/releases)
+[![License: 0BSD](https://img.shields.io/badge/license-0BSD-blue.svg)](LICENSE)
+[![Go Reference](https://pkg.go.dev/badge/github.com/PayCal-Technologies/clyde.svg)](https://pkg.go.dev/github.com/PayCal-Technologies/clyde)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-63b7ff)](#install-from-source)
+
 Clyde is a small Go MCP-client harness for moving auditable repository source bundles
 into Google NotebookLM.
 
@@ -11,6 +17,10 @@ Official resources:
 - Clyde help: [paycaltech.com/clyde/help](https://paycaltech.com/clyde/help)
 - GitHub: [github.com/PayCal-Technologies/clyde](https://github.com/PayCal-Technologies/clyde)
 - Created by [PayCal Technologies](https://paycaltech.com)
+- Examples: [`examples/`](examples/)
+- Testing guide: [`TESTING.md`](TESTING.md)
+- Contributing: [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- Security reports: [`SECURITY.md`](SECURITY.md)
 
 ![Clyde terminal showing doctor diagnostics and repository scan report output](help/assets/clyde-terminal.png)
 
@@ -63,7 +73,7 @@ Use this procedure for every Clyde release and performance pass:
 7. Rebuild the local global install after the release when this workstation
    needs the new `clyde` binary.
 
-Install from source:
+## Install From Source
 
 ```bash
 go install github.com/PayCal-Technologies/clyde/cmd/clyde@main

@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#06101b"/>
+      <stop offset="0.6" stop-color="#102033"/>
+      <stop offset="1" stop-color="#0b3d62"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="640" fill="url(#bg)"/>
+  <text x="84" y="150" fill="#63b7ff" font-size="34" font-family="Arial, sans-serif" font-weight="700">PayCal Technologies</text>
+  <text x="84" y="250" fill="#eef7ff" font-size="92" font-family="Arial, sans-serif" font-weight="800">Clyde</text>
+  <text x="84" y="322" fill="#a9bbcb" font-size="34" font-family="Arial, sans-serif">Local MCP + Ollama feedback</text>
+  <text x="84" y="374" fill="#a9bbcb" font-size="34" font-family="Arial, sans-serif">Auditable NotebookLM bundles</text>
+  <rect x="84" y="440" width="500" height="70" rx="14" fill="#0c3d62" stroke="#57b3ff" stroke-opacity="0.7"/>
+  <text x="116" y="486" fill="#eaf6ff" font-size="28" font-family="Arial, sans-serif" font-weight="700">paycaltech.com/clyde</text>
+  <rect x="690" y="110" width="486" height="350" rx="24" fill="#06101b" stroke="#9dcced" stroke-opacity="0.55"/>
+  <rect x="690" y="110" width="486" height="54" rx="24" fill="#17283a"/>
+  <circle cx="724" cy="137" r="9" fill="#ff5f57"/>
+  <circle cx="754" cy="137" r="9" fill="#ffbd2e"/>
+  <circle cx="784" cy="137" r="9" fill="#28c840"/>
+  <text x="724" y="218" fill="#35d0a3" font-size="24" font-family="Monaco, Consolas, monospace">clyde doctor .</text>
+  <text x="724" y="262" fill="#4bd680" font-size="22" font-family="Monaco, Consolas, monospace">OK config loaded</text>
+  <text x="724" y="302" fill="#4bd680" font-size="22" font-family="Monaco, Consolas, monospace">OK ollama reachable</text>
+  <text x="724" y="342" fill="#57b3ff" font-size="22" font-family="Monaco, Consolas, monospace">36 files, 40 chunks</text>
+  <text x="724" y="382" fill="#eaf6ff" font-size="22" font-family="Monaco, Consolas, monospace">AI-ready JSON help</text>
+</svg>
