@@ -1,0 +1,10 @@
+{
+  "ollama_url": "http://127.0.0.1:11434",
+  "model": "qwen2.5-coder:7b",
+  "num_ctx": 8192,
+  "ask_timeout_seconds": 120,
+  "agent_timeout_seconds": 180,
+  "max_context_chars": 16000,
+  "max_file_bytes": 250000,
+  "max_chunk_chars": 18000
+}

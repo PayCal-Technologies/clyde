@@ -28,6 +28,8 @@ type MCPClient struct {
 	mu      sync.Mutex
 }
 
+const maxMCPFrameBytes = 16 * 1024 * 1024
+
 func NewMCPClient(command []string, env map[string]string, timeout time.Duration) *MCPClient {
 	return &MCPClient{Command: command, Env: env, Timeout: timeout, nextID: 1, framing: "content-length"}
 }
@@ -113,6 +115,10 @@ func (c *MCPClient) CallTool(ctx context.Context, name string, arguments map[str
 func (c *MCPClient) Request(ctx context.Context, method string, params map[string]any) (map[string]any, error) {
 	c.mu.Lock()
 	id := c.nextID
+	if id == int(^uint(0)>>1) {
+		c.mu.Unlock()
+		return nil, errf("MCP request id overflow")
+	}
 	c.nextID++
 	c.mu.Unlock()
 	if err := c.send(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}); err != nil {
@@ -123,8 +129,15 @@ func (c *MCPClient) Request(ctx context.Context, method string, params map[strin
 		if time.Now().After(deadline) {
 			return nil, errf("timed out waiting for MCP response after %s. Recent stderr:\n%s", c.Timeout, c.stderr.String())
 		}
-		msg, err := c.readMessage(ctx)
+		readCtx, cancel := context.WithTimeout(ctx, time.Until(deadline))
+		msg, err := c.readMessage(readCtx)
+		readErr := readCtx.Err()
+		cancel()
 		if err != nil {
+			if readErr != nil {
+				_ = c.Close()
+				return nil, errf("timed out waiting for MCP response after %s. Recent stderr:\n%s", c.Timeout, c.stderr.String())
+			}
 			return nil, err
 		}
 		if numberInt(msg["id"]) != id {
@@ -189,7 +202,13 @@ func (c *MCPClient) readMessage(ctx context.Context) (map[string]any, error) {
 		for {
 			line := strings.TrimSpace(header)
 			if strings.HasPrefix(strings.ToLower(line), "content-length:") {
-				length, _ = strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, "Content-Length:")))
+				value := strings.TrimSpace(line[len("content-length:"):])
+				n, err := strconv.Atoi(value)
+				if err != nil {
+					ch <- result{err: errf("invalid MCP Content-Length header: %q", value)}
+					return
+				}
+				length = n
 			}
 			next, err := c.reader.ReadString('\n')
 			if err != nil {
@@ -203,6 +222,10 @@ func (c *MCPClient) readMessage(ctx context.Context) (map[string]any, error) {
 		}
 		if length <= 0 {
 			ch <- result{err: errf("MCP frame is missing Content-Length header")}
+			return
+		}
+		if length > maxMCPFrameBytes {
+			ch <- result{err: errf("MCP frame is too large: %d bytes", length)}
 			return
 		}
 		body := make([]byte, length)

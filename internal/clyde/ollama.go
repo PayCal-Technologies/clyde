@@ -23,6 +23,8 @@ type OllamaClient struct {
 	Client  *http.Client
 }
 
+const maxOllamaErrorBodyBytes = 64 * 1024
+
 type GenerateOptions struct {
 	Model  string
 	Prompt string
@@ -54,7 +56,7 @@ func (c OllamaClient) ListModels(ctx context.Context) ([]LocalModel, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxOllamaErrorBodyBytes))
 		return nil, errf("ollama list models failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 	var payload struct {
@@ -69,7 +71,15 @@ func (c OllamaClient) ListModels(ctx context.Context) ([]LocalModel, error) {
 	}
 	models := make([]LocalModel, 0, len(payload.Models))
 	for _, model := range payload.Models {
-		models = append(models, LocalModel{Name: model.Name, Size: model.Size, ModifiedAt: model.ModifiedAt})
+		name := strings.TrimSpace(model.Name)
+		if name == "" {
+			continue
+		}
+		size := model.Size
+		if size < 0 {
+			size = 0
+		}
+		models = append(models, LocalModel{Name: name, Size: size, ModifiedAt: model.ModifiedAt})
 	}
 	return models, nil
 }
@@ -79,8 +89,15 @@ func (c OllamaClient) Generate(ctx context.Context, model, prompt string, stream
 }
 
 func (c OllamaClient) GenerateWithOptions(ctx context.Context, opts GenerateOptions, out io.Writer) (string, error) {
+	opts.Model = strings.TrimSpace(opts.Model)
 	if opts.Model == "" {
 		return "", errf("model must not be empty")
+	}
+	if strings.ContainsRune(opts.Model, 0) {
+		return "", errf("model must not contain NUL bytes")
+	}
+	if opts.NumCtx < 0 {
+		return "", errf("num_ctx must be zero or greater")
 	}
 	payload := map[string]any{
 		"model":  opts.Model,
@@ -105,7 +122,7 @@ func (c OllamaClient) GenerateWithOptions(ctx context.Context, opts GenerateOpti
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxOllamaErrorBodyBytes))
 		return "", errf("ollama generate failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 	if !opts.Stream {
@@ -149,9 +166,11 @@ func (c OllamaClient) GenerateWithOptions(ctx context.Context, opts GenerateOpti
 }
 
 func SelectModel(explicit string, cfg Config, models []LocalModel) (string, error) {
+	explicit = strings.TrimSpace(explicit)
 	if explicit != "" {
 		return explicit, nil
 	}
+	cfg.Model = strings.TrimSpace(cfg.Model)
 	if cfg.Model != "" {
 		return cfg.Model, nil
 	}

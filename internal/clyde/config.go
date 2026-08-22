@@ -63,6 +63,7 @@ func LoadConfig() (Config, string, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			applyConfigEnv(&cfg)
+			normalizeConfigStrings(&cfg)
 			if err := ValidateConfig(cfg); err != nil {
 				return cfg, path, err
 			}
@@ -78,6 +79,7 @@ func LoadConfig() (Config, string, error) {
 	}
 	cfg = withConfigDefaults(cfg)
 	applyConfigEnv(&cfg)
+	normalizeConfigStrings(&cfg)
 	if err := ValidateConfig(cfg); err != nil {
 		return cfg, path, err
 	}
@@ -102,6 +104,9 @@ func ValidateConfig(cfg Config) error {
 	}
 	if strings.TrimSpace(cfg.Model) == "" {
 		return errf("model must not be blank")
+	}
+	if strings.ContainsRune(cfg.Model, 0) {
+		return errf("model must not contain NUL bytes")
 	}
 	if err := validatePositiveInt("num_ctx", cfg.NumCtx, maxConfigNumCtx); err != nil {
 		return err
@@ -159,6 +164,11 @@ func applyConfigEnv(cfg *Config) {
 	}
 }
 
+func normalizeConfigStrings(cfg *Config) {
+	cfg.OllamaURL = strings.TrimSpace(cfg.OllamaURL)
+	cfg.Model = strings.TrimSpace(cfg.Model)
+}
+
 func rejectNegativeConfig(cfg Config) error {
 	if cfg.NumCtx < 0 {
 		return errf("num_ctx must be zero or positive")
@@ -184,6 +194,9 @@ func rejectNegativeConfig(cfg Config) error {
 func validateOllamaURL(raw string) error {
 	if strings.TrimSpace(raw) != raw || raw == "" {
 		return errf("ollama_url must be a valid http or https URL")
+	}
+	if strings.ContainsRune(raw, 0) {
+		return errf("ollama_url must not contain NUL bytes")
 	}
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {

@@ -88,6 +88,32 @@ func TestLoadConfigRejectsBlankModel(t *testing.T) {
 	}
 }
 
+func TestLoadConfigTrimsStringValues(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("CLYDE_CONFIG", path)
+	mustWrite(t, path, `{"ollama_url":" http://127.0.0.1:11434/ ","model":" qwen2.5-coder:7b "}`)
+
+	cfg, _, err := LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.OllamaURL != "http://127.0.0.1:11434/" || cfg.Model != "qwen2.5-coder:7b" {
+		t.Fatalf("unexpected config strings: %#v", cfg)
+	}
+}
+
+func TestLoadConfigRejectsNULStringValues(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("CLYDE_CONFIG", path)
+	mustWrite(t, path, "{\"model\":\"bad\\u0000model\"}")
+
+	_, _, err := LoadConfig()
+
+	if err == nil || !strings.Contains(err.Error(), "NUL") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestLoadConfigRejectsNegativeLimits(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	t.Setenv("CLYDE_CONFIG", path)

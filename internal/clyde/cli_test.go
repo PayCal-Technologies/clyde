@@ -129,3 +129,54 @@ func TestAboutIncludesProductLinks(t *testing.T) {
 		}
 	}
 }
+
+func TestCompletionCommandPrintsShellScript(t *testing.T) {
+	var out, errOut bytes.Buffer
+	status := Main([]string{"completion", "zsh"}, &out, &errOut)
+	if status != 0 {
+		t.Fatalf("status=%d stderr=%s", status, errOut.String())
+	}
+	if !strings.Contains(out.String(), "#compdef clyde") || !strings.Contains(out.String(), "agent:scan repo") {
+		t.Fatalf("unexpected completion output: %s", out.String())
+	}
+}
+
+func TestCompletionRejectsUnsupportedShell(t *testing.T) {
+	var out, errOut bytes.Buffer
+	status := Main([]string{"completion", "powershell"}, &out, &errOut)
+	if status != 1 {
+		t.Fatalf("expected failure")
+	}
+	if !strings.Contains(errOut.String(), "unsupported shell") {
+		t.Fatalf("unexpected stderr: %s", errOut.String())
+	}
+}
+
+func TestCLIRejectsInvalidNumericFlags(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "ask timeout", args: []string{"ask", "--timeout", "-1", "hello"}, want: "--timeout must be greater than 0"},
+		{name: "ask num ctx", args: []string{"ask", "--num-ctx", "-1", "hello"}, want: "--num-ctx must be zero or greater"},
+		{name: "ask num ctx cap", args: []string{"ask", "--num-ctx", "1000001", "hello"}, want: "--num-ctx is too large"},
+		{name: "agent context", args: []string{"agent", ".", "--max-context-chars", "0", "review"}, want: "max-context-chars must be positive"},
+		{name: "models timeout", args: []string{"models", "--timeout", "0"}, want: "--timeout must be greater than 0"},
+		{name: "daemon port", args: []string{"daemon", "--port", "70000"}, want: "--port must be between 1 and 65535"},
+		{name: "status interval", args: []string{"status", "--interval", "0"}, want: "--interval must be greater than 0"},
+		{name: "sync command", args: []string{"sync", ".", "--notebook-id", "nb", "--approve-upload", "--mcp-command", ""}, want: "--mcp-command must not be empty"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out, errOut bytes.Buffer
+			status := MainWithInput(tt.args, strings.NewReader(""), &out, &errOut)
+			if status != 1 {
+				t.Fatalf("expected failure, got status=%d out=%q err=%q", status, out.String(), errOut.String())
+			}
+			if !strings.Contains(errOut.String(), tt.want) {
+				t.Fatalf("stderr missing %q: %s", tt.want, errOut.String())
+			}
+		})
+	}
+}

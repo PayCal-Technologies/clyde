@@ -48,6 +48,27 @@ func TestOllamaListModelsAndGenerate(t *testing.T) {
 	}
 }
 
+func TestOllamaListModelsSanitizesModelMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"models": []map[string]any{
+				{"name": "  qwen2.5-coder:7b  ", "size": -10},
+				{"name": "   ", "size": 1234},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewOllamaClient(server.URL, time.Second)
+	models, err := client.ListModels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 1 || models[0].Name != "qwen2.5-coder:7b" || models[0].Size != 0 {
+		t.Fatalf("unexpected models: %#v", models)
+	}
+}
+
 func TestOllamaGenerateSendsNumCtx(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
@@ -71,6 +92,16 @@ func TestOllamaGenerateSendsNumCtx(t *testing.T) {
 	}
 	if got != "ok" {
 		t.Fatalf("unexpected response: %s", got)
+	}
+}
+
+func TestOllamaGenerateRejectsHardenedInputs(t *testing.T) {
+	client := NewOllamaClient("http://127.0.0.1:1", time.Second)
+	if _, err := client.GenerateWithOptions(context.Background(), GenerateOptions{Model: "   ", Prompt: "hello"}, nil); err == nil || !strings.Contains(err.Error(), "model") {
+		t.Fatalf("unexpected blank model error: %v", err)
+	}
+	if _, err := client.GenerateWithOptions(context.Background(), GenerateOptions{Model: "ok", Prompt: "hello", NumCtx: -1}, nil); err == nil || !strings.Contains(err.Error(), "num_ctx") {
+		t.Fatalf("unexpected num_ctx error: %v", err)
 	}
 }
 

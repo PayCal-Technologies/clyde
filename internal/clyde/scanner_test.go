@@ -50,6 +50,37 @@ func TestScanRepoRejectsFilePath(t *testing.T) {
 	}
 }
 
+func TestScanRepoRejectsInvalidMaxFileBytes(t *testing.T) {
+	dir := t.TempDir()
+
+	_, err := ScanRepo(dir, nil, nil, 0)
+
+	if err == nil || !strings.Contains(err.Error(), "maxFileBytes") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestScanRepoSkipsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	mustWrite(t, outside, "do not read\n")
+	link := filepath.Join(dir, "outside.txt")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := ScanRepo(dir, nil, nil, 250000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Files) != 0 {
+		t.Fatalf("expected no scanned files, got %#v", result.Files)
+	}
+	if len(result.Skips) != 1 || result.Skips[0].Reason != "symbolic link" {
+		t.Fatalf("unexpected skips: %#v", result.Skips)
+	}
+}
+
 func TestScanRepoIncludeCanMatchNoFiles(t *testing.T) {
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, "app.go"), "package main\n")

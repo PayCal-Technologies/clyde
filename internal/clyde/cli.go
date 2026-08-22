@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -23,6 +24,8 @@ const (
 	productCreator     = "PayCal Technologies"
 	productCreatorURL  = "https://paycaltech.com"
 )
+
+const maxCLISeconds = 24 * 60 * 60
 
 func Main(args []string, stdout, stderr io.Writer) int {
 	return MainWithInput(args, os.Stdin, stdout, stderr)
@@ -65,6 +68,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	case "about":
 		printAbout(stdout)
 		return nil
+	case "completion":
+		return cmdCompletion(args[1:], stdout)
 	case "tui":
 		return RunTUI(stdin, stdout, stderr)
 	case "config":
@@ -263,6 +268,15 @@ func cmdSync(args []string, out, errOut io.Writer) error {
 	if *backend != "mcp" && *backend != "nlm" {
 		return errf("--backend must be mcp or nlm")
 	}
+	if err := validatePositiveSeconds("mcp-timeout", *timeout); err != nil {
+		return err
+	}
+	if err := validateCommandFlag("mcp-command", *mcpCommand); err != nil {
+		return err
+	}
+	if err := validateCommandFlag("nlm-command", *nlmCommand); err != nil {
+		return err
+	}
 	if *subject != "" && *bookTitle != "" {
 		return errf("--subject and --book-title are mutually exclusive")
 	}
@@ -339,6 +353,9 @@ func cmdDaemon(args []string, out io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if *port <= 0 || *port > 65535 {
+		return errf("--port must be between 1 and 65535")
+	}
 	return ServeStatus(*host, *port, out)
 }
 
@@ -352,6 +369,12 @@ func cmdStatus(args []string, out io.Writer) error {
 	watch := fs.Bool("watch", false, "poll until terminal")
 	interval := fs.Float64("interval", 1, "poll interval")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *port <= 0 || *port > 65535 {
+		return errf("--port must be between 1 and 65535")
+	}
+	if err := validatePositiveSeconds("interval", *interval); err != nil {
 		return err
 	}
 	seen := ""
@@ -401,6 +424,12 @@ func cmdModels(args []string, out io.Writer) error {
 	if err := fs.Parse(interspersedArgs(args, map[string]bool{"json": true})); err != nil {
 		return err
 	}
+	if err := validateOllamaURL(*ollamaURL); err != nil {
+		return err
+	}
+	if err := validatePositiveSeconds("timeout", *timeout); err != nil {
+		return err
+	}
 	client := NewOllamaClient(*ollamaURL, time.Duration(*timeout*float64(time.Second)))
 	models, err := client.ListModels(context.Background())
 	if err != nil {
@@ -448,6 +477,15 @@ func cmdAsk(args []string, stdin io.Reader, out io.Writer) error {
 	promptFile := fs.String("prompt-file", "", "read prompt from file")
 	readStdin := fs.Bool("stdin", false, "read prompt from stdin")
 	if err := fs.Parse(interspersedArgs(args, map[string]bool{"no-stream": true, "stdin": true})); err != nil {
+		return err
+	}
+	if err := validateOllamaURL(*ollamaURL); err != nil {
+		return err
+	}
+	if err := validatePositiveSeconds("timeout", *timeout); err != nil {
+		return err
+	}
+	if err := validateNumCtxFlag(*numCtx); err != nil {
 		return err
 	}
 	prompt, err := promptText(stdin, fs.Args(), *promptFile, *readStdin)
@@ -508,6 +546,18 @@ func cmdAgent(args []string, stdin io.Reader, out io.Writer) error {
 	if fs.NArg() < 1 {
 		return errf("agent requires REPO and optional feedback prompt")
 	}
+	if err := validateOllamaURL(*ollamaURL); err != nil {
+		return err
+	}
+	if err := validatePositiveSeconds("timeout", *timeout); err != nil {
+		return err
+	}
+	if err := validatePositiveInt("max-context-chars", *maxContext, maxConfigContextChars); err != nil {
+		return err
+	}
+	if err := validateNumCtxFlag(*numCtx); err != nil {
+		return err
+	}
 	if !*allowRemote && !isLocalOllamaURL(*ollamaURL) {
 		return errf("agent refuses to send scanned source to non-local Ollama URL; use --allow-remote-ollama to override")
 	}
@@ -555,11 +605,12 @@ func cmdAgent(args []string, stdin io.Reader, out io.Writer) error {
 }
 
 func printHelp(out io.Writer) {
-	fmt.Fprintln(out, "usage: clyde {about,tui,config,preview,bundle,sync,daemon,status,book,models,ask,agent} ...")
+	fmt.Fprintln(out, "usage: clyde {about,completion,tui,config,preview,bundle,sync,daemon,status,book,models,ask,agent} ...")
 	fmt.Fprintln(out, "run clyde with no arguments in a terminal to open the TUI")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "examples:")
 	fmt.Fprintln(out, "  clyde preview . --include 'internal/**/*.go'")
+	fmt.Fprintln(out, "  clyde completion zsh > /opt/homebrew/share/zsh/site-functions/_clyde")
 	fmt.Fprintln(out, "  clyde models")
 	fmt.Fprintln(out, "  clyde config show")
 	fmt.Fprintln(out, "  clyde ask --model qwen2.5-coder:7b --stdin")
@@ -582,6 +633,23 @@ func printLinks(out io.Writer) {
 	fmt.Fprintf(out, "Help: %s\n", productHelpURL)
 	fmt.Fprintf(out, "GitHub: %s\n", productGitHubURL)
 	fmt.Fprintf(out, "PayCal Technologies: %s\n", productCreatorURL)
+}
+
+func cmdCompletion(args []string, out io.Writer) error {
+	if len(args) != 1 {
+		return errf("completion requires shell: bash, zsh, or fish")
+	}
+	switch args[0] {
+	case "bash":
+		fmt.Fprint(out, bashCompletionScript)
+	case "zsh":
+		fmt.Fprint(out, zshCompletionScript)
+	case "fish":
+		fmt.Fprint(out, fishCompletionScript)
+	default:
+		return errf("unsupported shell %q; expected bash, zsh, or fish", args[0])
+	}
+	return nil
 }
 
 func cmdConfig(args []string, out io.Writer) error {
@@ -715,6 +783,36 @@ func validateScanFlags(flags scanFlags) error {
 	return nil
 }
 
+func validatePositiveSeconds(name string, value float64) error {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
+		return errf("--%s must be greater than 0", name)
+	}
+	if value > maxCLISeconds {
+		return errf("--%s is too large; maximum is %d seconds", name, maxCLISeconds)
+	}
+	return nil
+}
+
+func validateNumCtxFlag(value int) error {
+	if value < 0 {
+		return errf("--num-ctx must be zero or greater")
+	}
+	if value > maxConfigNumCtx {
+		return errf("--num-ctx is too large; maximum is %d", maxConfigNumCtx)
+	}
+	return nil
+}
+
+func validateCommandFlag(name, value string) error {
+	if strings.ContainsRune(value, 0) {
+		return errf("--%s must not contain NUL bytes", name)
+	}
+	if len(shellFields(value)) == 0 {
+		return errf("--%s must not be empty", name)
+	}
+	return nil
+}
+
 type multiFlag []string
 
 func (m *multiFlag) String() string {
@@ -804,3 +902,136 @@ func interspersedArgs(args []string, boolFlags map[string]bool) []string {
 	}
 	return append(flags, positional...)
 }
+
+const bashCompletionScript = `# bash completion for clyde
+_clyde_completion() {
+  local cur prev commands
+  COMPREPLY=()
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  prev="${COMP_WORDS[COMP_CWORD-1]}"
+  commands="about completion tui config preview bundle sync daemon status book models ask agent"
+
+  if [[ ${COMP_CWORD} -eq 1 ]]; then
+    COMPREPLY=( $(compgen -W "${commands}" -- "${cur}") )
+    return 0
+  fi
+
+  case "${COMP_WORDS[1]}" in
+    completion)
+      COMPREPLY=( $(compgen -W "bash zsh fish" -- "${cur}") )
+      ;;
+    config)
+      COMPREPLY=( $(compgen -W "path show init" -- "${cur}") )
+      ;;
+    preview)
+      COMPREPLY=( $(compgen -W "--include --exclude --max-file-bytes --max-chunk-chars --show-files --show-skips --json --help" -- "${cur}") )
+      ;;
+    bundle)
+      COMPREPLY=( $(compgen -W "--out --subject --book-title --include --exclude --max-file-bytes --max-chunk-chars --help" -- "${cur}") )
+      ;;
+    sync)
+      COMPREPLY=( $(compgen -W "--notebook-id --notebook-url --approve-upload --backend --mcp-command --nlm-command --delete-existing-sources --mcp-timeout --status-url --quiet-progress --job-id --subject --book-title --include --exclude --max-file-bytes --max-chunk-chars --help" -- "${cur}") )
+      ;;
+    models)
+      COMPREPLY=( $(compgen -W "--ollama-url --timeout --json --help" -- "${cur}") )
+      ;;
+    ask)
+      COMPREPLY=( $(compgen -W "--model --ollama-url --timeout --num-ctx --no-stream --prompt-file --stdin --help" -- "${cur}") )
+      ;;
+    agent)
+      COMPREPLY=( $(compgen -W "--model --ollama-url --timeout --max-context-chars --num-ctx --no-stream --prompt-file --stdin --allow-remote-ollama --include --exclude --max-file-bytes --max-chunk-chars --help" -- "${cur}") )
+      ;;
+    daemon)
+      COMPREPLY=( $(compgen -W "--host --port --help" -- "${cur}") )
+      ;;
+    status)
+      COMPREPLY=( $(compgen -W "--host --port --job-id --json --watch --interval --help" -- "${cur}") )
+      ;;
+  esac
+}
+complete -F _clyde_completion clyde
+`
+
+const zshCompletionScript = `#compdef clyde
+_clyde() {
+  local -a commands
+  commands=(
+    'about:show product details and links'
+    'completion:print shell completion script'
+    'tui:open the terminal UI'
+    'config:manage Clyde config'
+    'preview:show files Clyde would scan'
+    'bundle:write manifest.json and chunks.jsonl'
+    'sync:upload chunks to NotebookLM'
+    'daemon:serve sync status'
+    'status:read sync status'
+    'book:plan a dated NotebookLM book name'
+    'models:list local Ollama models'
+    'ask:ask a local Ollama model'
+    'agent:scan repo and ask a local Ollama model'
+  )
+
+  _arguments -C \
+    '1:command:->command' \
+    '*::arg:->args'
+
+  case $state in
+    command)
+      _describe 'command' commands
+      ;;
+    args)
+      case $words[2] in
+        completion) _values 'shell' bash zsh fish ;;
+        config) _values 'config command' path show init ;;
+        preview) _arguments '--include=[]' '--exclude=[]' '--max-file-bytes=[]' '--max-chunk-chars=[]' '--show-files=[]' '--show-skips=[]' '--json' '--help' ;;
+        bundle) _arguments '--out=[]' '--subject=[]' '--book-title=[]' '--include=[]' '--exclude=[]' '--max-file-bytes=[]' '--max-chunk-chars=[]' '--help' ;;
+        sync) _arguments '--notebook-id=[]' '--notebook-url=[]' '--approve-upload' '--backend=[mcp or nlm]:backend:(mcp nlm)' '--mcp-command=[]' '--nlm-command=[]' '--delete-existing-sources' '--mcp-timeout=[]' '--status-url=[]' '--quiet-progress' '--job-id=[]' '--subject=[]' '--book-title=[]' '--include=[]' '--exclude=[]' '--max-file-bytes=[]' '--max-chunk-chars=[]' '--help' ;;
+        models) _arguments '--ollama-url=[]' '--timeout=[]' '--json' '--help' ;;
+        ask) _arguments '--model=[]' '--ollama-url=[]' '--timeout=[]' '--num-ctx=[]' '--no-stream' '--prompt-file=[]' '--stdin' '--help' ;;
+        agent) _arguments '--model=[]' '--ollama-url=[]' '--timeout=[]' '--max-context-chars=[]' '--num-ctx=[]' '--no-stream' '--prompt-file=[]' '--stdin' '--allow-remote-ollama' '--include=[]' '--exclude=[]' '--max-file-bytes=[]' '--max-chunk-chars=[]' '--help' ;;
+        daemon) _arguments '--host=[]' '--port=[]' '--help' ;;
+        status) _arguments '--host=[]' '--port=[]' '--job-id=[]' '--json' '--watch' '--interval=[]' '--help' ;;
+      esac
+      ;;
+  esac
+}
+_clyde "$@"
+`
+
+const fishCompletionScript = `# fish completion for clyde
+complete -c clyde -f
+complete -c clyde -n "__fish_use_subcommand" -a "about completion tui config preview bundle sync daemon status book models ask agent"
+complete -c clyde -n "__fish_seen_subcommand_from completion" -a "bash zsh fish"
+complete -c clyde -n "__fish_seen_subcommand_from config" -a "path show init"
+complete -c clyde -n "__fish_seen_subcommand_from preview" -l include -r
+complete -c clyde -n "__fish_seen_subcommand_from preview" -l exclude -r
+complete -c clyde -n "__fish_seen_subcommand_from preview" -l max-file-bytes -r
+complete -c clyde -n "__fish_seen_subcommand_from preview" -l max-chunk-chars -r
+complete -c clyde -n "__fish_seen_subcommand_from preview" -l show-files -r
+complete -c clyde -n "__fish_seen_subcommand_from preview" -l show-skips -r
+complete -c clyde -n "__fish_seen_subcommand_from preview" -l json
+complete -c clyde -n "__fish_seen_subcommand_from bundle" -l out -r
+complete -c clyde -n "__fish_seen_subcommand_from bundle" -l subject -r
+complete -c clyde -n "__fish_seen_subcommand_from bundle" -l book-title -r
+complete -c clyde -n "__fish_seen_subcommand_from sync" -l notebook-id -r
+complete -c clyde -n "__fish_seen_subcommand_from sync" -l notebook-url -r
+complete -c clyde -n "__fish_seen_subcommand_from sync" -l approve-upload
+complete -c clyde -n "__fish_seen_subcommand_from sync" -l backend -xa "mcp nlm"
+complete -c clyde -n "__fish_seen_subcommand_from sync" -l delete-existing-sources
+complete -c clyde -n "__fish_seen_subcommand_from models" -l ollama-url -r
+complete -c clyde -n "__fish_seen_subcommand_from models" -l timeout -r
+complete -c clyde -n "__fish_seen_subcommand_from models" -l json
+complete -c clyde -n "__fish_seen_subcommand_from ask agent" -l model -r
+complete -c clyde -n "__fish_seen_subcommand_from ask agent" -l ollama-url -r
+complete -c clyde -n "__fish_seen_subcommand_from ask agent" -l timeout -r
+complete -c clyde -n "__fish_seen_subcommand_from ask agent" -l num-ctx -r
+complete -c clyde -n "__fish_seen_subcommand_from ask agent" -l no-stream
+complete -c clyde -n "__fish_seen_subcommand_from ask agent" -l prompt-file -r
+complete -c clyde -n "__fish_seen_subcommand_from ask agent" -l stdin
+complete -c clyde -n "__fish_seen_subcommand_from agent" -l allow-remote-ollama
+complete -c clyde -n "__fish_seen_subcommand_from agent" -l max-context-chars -r
+complete -c clyde -n "__fish_seen_subcommand_from daemon status" -l host -r
+complete -c clyde -n "__fish_seen_subcommand_from daemon status" -l port -r
+complete -c clyde -n "__fish_seen_subcommand_from status" -l watch
+complete -c clyde -n "__fish_seen_subcommand_from status" -l interval -r
+`

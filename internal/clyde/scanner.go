@@ -29,6 +29,9 @@ var secretPatterns = []*regexp.Regexp{
 }
 
 func ScanRepo(repo string, include, exclude []string, maxFileBytes int64) (ScanResult, error) {
+	if maxFileBytes <= 0 {
+		return ScanResult{}, errf("maxFileBytes must be greater than 0")
+	}
 	abs, err := filepath.Abs(repo)
 	if err != nil {
 		return ScanResult{}, err
@@ -46,6 +49,10 @@ func ScanRepo(repo string, include, exclude []string, maxFileBytes int64) (ScanR
 		if err != nil {
 			continue
 		}
+		if rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+			result.Skips = append(result.Skips, SkipRecord{Path: filepath.ToSlash(rel), Reason: "outside repo"})
+			continue
+		}
 		rel = filepath.ToSlash(rel)
 		if len(include) > 0 && !matchesAny(rel, include) {
 			result.Skips = append(result.Skips, SkipRecord{Path: rel, Reason: "not matched by include globs"})
@@ -55,9 +62,17 @@ func ScanRepo(repo string, include, exclude []string, maxFileBytes int64) (ScanR
 			result.Skips = append(result.Skips, SkipRecord{Path: rel, Reason: "excluded by glob"})
 			continue
 		}
-		stat, err := os.Stat(path)
+		stat, err := os.Lstat(path)
 		if err != nil {
 			result.Skips = append(result.Skips, SkipRecord{Path: rel, Reason: "stat failed: " + err.Error()})
+			continue
+		}
+		if stat.Mode()&os.ModeSymlink != 0 {
+			result.Skips = append(result.Skips, SkipRecord{Path: rel, Reason: "symbolic link"})
+			continue
+		}
+		if !stat.Mode().IsRegular() {
+			result.Skips = append(result.Skips, SkipRecord{Path: rel, Reason: "not a regular file"})
 			continue
 		}
 		if stat.Size() > maxFileBytes {

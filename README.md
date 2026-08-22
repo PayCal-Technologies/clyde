@@ -48,10 +48,18 @@ clyde config show
 clyde --about
 ```
 
+Generate shell completion:
+
+```bash
+clyde completion zsh > /opt/homebrew/share/zsh/site-functions/_clyde
+clyde completion bash > ~/.clyde-completion.bash
+clyde completion fish > ~/.config/fish/completions/clyde.fish
+```
+
 By default Clyde reads `~/.config/clyde/config.json`. Set `CLYDE_CONFIG` to use
 a different file. CLI flags override environment variables, environment
 variables override the config file, and the config file overrides Clyde's built
-in v0.1 defaults.
+in v0.1 defaults. A copyable example lives at `examples/config.json`.
 
 Example config:
 
@@ -81,11 +89,11 @@ Configuration reference:
 | `max_file_bytes` | Per-file source scanning cap. | `250000` |
 | `max_chunk_chars` | Source bundle chunk size for NotebookLM upload records. | `18000` |
 
-Omitted or zero numeric config values are replaced with defaults. Negative
-numeric values, blank model names, invalid Ollama URLs, and oversized limits are
-rejected during config load. `CLYDE_OLLAMA_URL` and `CLYDE_MODEL` override the
-file and are validated the same way. `CLYDE_CONFIG` points Clyde at an alternate
-config file.
+Omitted or zero numeric config values are replaced with defaults. String values
+are trimmed. Negative numeric values, blank model names, NUL bytes, invalid
+Ollama URLs, and oversized limits are rejected during config load.
+`CLYDE_OLLAMA_URL` and `CLYDE_MODEL` override the file and are validated the
+same way. `CLYDE_CONFIG` points Clyde at an alternate config file.
 
 Preview a repo:
 
@@ -185,6 +193,17 @@ The TUI is intentionally dependency-free in v0.1. It can list/select models,
 ask the selected local model, preview the current repo, and run the local agent
 against the current repo.
 
+TUI command map:
+
+| Key | Action |
+| --- | --- |
+| `1` | Ask the selected local model. |
+| `2` | Refresh and list local Ollama models. |
+| `3` | Preview the current repo with a concise file/skip list. |
+| `4` | Select a model by name or number. |
+| `5` | Run the local agent against the current repo. |
+| `q` | Quit. |
+
 Sync through the MCP backend:
 
 ```bash
@@ -246,6 +265,16 @@ Clyde is a transfer harness, not a security boundary. Review generated
 `manifest.json` before upload. Use a dedicated Google account and a private
 NotebookLM notebook. Do not upload secrets, production records, customer data,
 tokens, credentials, browser state, or private keys.
+
+Clyde also applies several guardrails before data leaves the local machine:
+
+- `agent` refuses non-local Ollama URLs unless `--allow-remote-ollama` is set.
+- Repo scans skip symlinks, non-regular files, binary files, likely secrets,
+  dependency/build folders, and files larger than `max_file_bytes`.
+- CLI duration, context, port, URL, and backend command flags are validated
+  before network or process work starts.
+- MCP responses have a maximum frame size to avoid accidental large allocation.
+- Ollama error bodies are size-limited before being included in error messages.
 
 ## What Clyde Does Not Do
 
