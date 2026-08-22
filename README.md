@@ -12,6 +12,8 @@ Official resources:
 - GitHub: [github.com/PayCal-Technologies/clyde](https://github.com/PayCal-Technologies/clyde)
 - Created by [PayCal Technologies](https://paycaltech.com)
 
+![Clyde terminal showing doctor diagnostics and repository scan report output](help/assets/clyde-terminal.png)
+
 It is intentionally conservative:
 
 - `preview` reports what would be included or skipped.
