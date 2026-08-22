@@ -127,6 +127,21 @@ func TestOllamaGenerateStreaming(t *testing.T) {
 	}
 }
 
+func TestOllamaGenerateRejectsOversizedStreamLine(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = w.Write([]byte(`{"response":"` + strings.Repeat("x", maxOllamaStreamLineBytes+1) + `"}` + "\n"))
+	}))
+	defer server.Close()
+
+	client := NewOllamaClient(server.URL, time.Second)
+	_, err := client.Generate(context.Background(), "qwen2.5-coder:7b", "hello", true, nil)
+
+	if err == nil {
+		t.Fatalf("expected oversized stream error")
+	}
+}
+
 func TestOllamaReportsNon2xxAndMalformedStream(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

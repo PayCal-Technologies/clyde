@@ -23,7 +23,12 @@ type OllamaClient struct {
 	Client  *http.Client
 }
 
-const maxOllamaErrorBodyBytes = 64 * 1024
+const (
+	maxOllamaErrorBodyBytes  = 64 * 1024
+	maxOllamaJSONBodyBytes   = 16 * 1024 * 1024
+	maxOllamaStreamLineBytes = 1024 * 1024
+	maxOllamaResponseChars   = 20 * 1024 * 1024
+)
 
 type GenerateOptions struct {
 	Model  string
@@ -66,7 +71,7 @@ func (c OllamaClient) ListModels(ctx context.Context) ([]LocalModel, error) {
 			ModifiedAt string `json:"modified_at"`
 		} `json:"models"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxOllamaJSONBodyBytes)).Decode(&payload); err != nil {
 		return nil, err
 	}
 	models := make([]LocalModel, 0, len(payload.Models))
@@ -129,14 +134,17 @@ func (c OllamaClient) GenerateWithOptions(ctx context.Context, opts GenerateOpti
 		var payload struct {
 			Response string `json:"response"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		if err := json.NewDecoder(io.LimitReader(resp.Body, maxOllamaJSONBodyBytes)).Decode(&payload); err != nil {
 			return "", err
+		}
+		if len(payload.Response) > maxOllamaResponseChars {
+			return "", errf("ollama response is too large")
 		}
 		return payload.Response, nil
 	}
 	var full strings.Builder
 	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxOllamaStreamLineBytes)
 	for scanner.Scan() {
 		var chunk struct {
 			Response string `json:"response"`
@@ -150,6 +158,9 @@ func (c OllamaClient) GenerateWithOptions(ctx context.Context, opts GenerateOpti
 			return full.String(), errf("%s", chunk.Error)
 		}
 		if chunk.Response != "" {
+			if full.Len()+len(chunk.Response) > maxOllamaResponseChars {
+				return full.String(), errf("ollama response is too large")
+			}
 			full.WriteString(chunk.Response)
 			if out != nil {
 				fmt.Fprint(out, chunk.Response)

@@ -126,6 +126,21 @@ func TestLoadConfigRejectsNegativeLimits(t *testing.T) {
 	}
 }
 
+func TestLoadConfigRejectsWritableConfigFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("CLYDE_CONFIG", path)
+	mustWrite(t, path, `{}`)
+	if err := os.Chmod(path, 0o622); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := LoadConfig()
+
+	if err == nil || !strings.Contains(err.Error(), "group- or world-writable") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestLoadConfigDefaultsZeroValues(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	t.Setenv("CLYDE_CONFIG", path)
@@ -151,6 +166,11 @@ func TestConfigCommandInitAndShow(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatal(err)
+	}
+	if info, err := os.Stat(path); err != nil {
+		t.Fatal(err)
+	} else if info.Mode().Perm() != 0o600 {
+		t.Fatalf("unexpected config mode: %v", info.Mode().Perm())
 	}
 
 	out.Reset()

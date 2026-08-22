@@ -71,6 +71,11 @@ func LoadConfig() (Config, string, error) {
 		}
 		return cfg, path, err
 	}
+	if info, err := os.Stat(path); err == nil {
+		if err := validateConfigFileMode(path, info.Mode().Perm()); err != nil {
+			return cfg, path, err
+		}
+	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return cfg, path, err
 	}
@@ -95,7 +100,7 @@ func WriteDefaultConfig(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0o644)
+	return os.WriteFile(path, append(data, '\n'), 0o600)
 }
 
 func ValidateConfig(cfg Config) error {
@@ -224,6 +229,13 @@ func validatePositiveInt64(name string, value, max int64) error {
 	}
 	if value > max {
 		return errf("%s is too large; maximum is %d", name, max)
+	}
+	return nil
+}
+
+func validateConfigFileMode(path string, perm os.FileMode) error {
+	if perm&0o022 != 0 {
+		return errf("config file must not be group- or world-writable: %s", path)
 	}
 	return nil
 }

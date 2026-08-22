@@ -3,6 +3,8 @@
 Clyde is a small Go MCP-client harness for moving auditable repository source bundles
 into Google NotebookLM.
 
+Current version: `0.2.0`
+
 Official resources:
 
 - Clyde homepage: [paycaltech.com/clyde](https://paycaltech.com/clyde)
@@ -72,7 +74,7 @@ Help surfaces are designed for both humans and automation:
 By default Clyde reads `~/.config/clyde/config.json`. Set `CLYDE_CONFIG` to use
 a different file. CLI flags override environment variables, environment
 variables override the config file, and the config file overrides Clyde's built
-in v0.1 defaults. A copyable example lives at `examples/config.json`.
+in v0.2 defaults. A copyable example lives at `examples/config.json`.
 
 Example config:
 
@@ -202,7 +204,7 @@ can also launch it explicitly:
 clyde tui
 ```
 
-The TUI is intentionally dependency-free in v0.1. It can list/select models,
+The TUI is intentionally dependency-free in v0.2. It can list/select models,
 ask the selected local model, preview the current repo, and run the local agent
 against the current repo.
 
@@ -286,8 +288,14 @@ Clyde also applies several guardrails before data leaves the local machine:
   dependency/build folders, and files larger than `max_file_bytes`.
 - CLI duration, context, port, URL, and backend command flags are validated
   before network or process work starts.
+- Clyde-written config files use private file permissions, and Clyde rejects
+  group- or world-writable config files.
 - MCP responses have a maximum frame size to avoid accidental large allocation.
 - Ollama error bodies are size-limited before being included in error messages.
+- Ollama JSON and streaming responses, Git file discovery, prompt input, and
+  subprocess output capture are bounded.
+- Subprocess timeout/error summaries redact large `--text` payloads before they
+  are printed or stored in status events.
 
 ## What Clyde Does Not Do
 

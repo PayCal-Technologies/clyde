@@ -2,8 +2,10 @@ package clyde
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -11,6 +13,12 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
+)
+
+const (
+	maxGitListBytes = 4 * 1024 * 1024
+	gitListTimeout  = 5 * time.Second
 )
 
 var defaultExcludes = []string{
@@ -107,10 +115,9 @@ func ScanRepo(repo string, include, exclude []string, maxFileBytes int64) (ScanR
 
 func candidatePaths(repo string) []string {
 	if _, err := os.Stat(filepath.Join(repo, ".git")); err == nil {
-		cmd := exec.Command("git", "-C", repo, "ls-files", "-co", "--exclude-standard")
-		if out, err := cmd.Output(); err == nil {
+		if out, ok := gitListFiles(repo); ok {
 			var paths []string
-			for _, line := range strings.Split(string(out), "\n") {
+			for _, line := range strings.Split(out, "\n") {
 				if line != "" {
 					paths = append(paths, filepath.Join(repo, filepath.FromSlash(line)))
 				}
@@ -136,6 +143,30 @@ func candidatePaths(repo string) []string {
 	})
 	sort.Strings(paths)
 	return paths
+}
+
+func gitListFiles(repo string) (string, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitListTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "-C", repo, "ls-files", "-co", "--exclude-standard")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", false
+	}
+	if err := cmd.Start(); err != nil {
+		return "", false
+	}
+	data, readErr := io.ReadAll(io.LimitReader(stdout, maxGitListBytes+1))
+	if len(data) > maxGitListBytes {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return "", false
+	}
+	waitErr := cmd.Wait()
+	if ctx.Err() != nil || readErr != nil || waitErr != nil {
+		return "", false
+	}
+	return string(data), true
 }
 
 func matchesAny(rel string, patterns []string) bool {
