@@ -3,7 +3,7 @@
 Clyde is a small Go MCP-client harness for moving auditable repository source bundles
 into Google NotebookLM.
 
-Current version: `0.2.1`
+Current version: `0.2.2`
 
 Official resources:
 
@@ -67,6 +67,20 @@ Install from source:
 go install github.com/PayCal-Technologies/clyde/cmd/clyde@main
 ```
 
+Windows from source in PowerShell:
+
+```powershell
+go install github.com/PayCal-Technologies/clyde/cmd/clyde@main
+clyde --about
+```
+
+Clyde is portable Go and is intended to run on Windows, macOS, and Linux.
+Repository previewing, bundling, local Ollama commands, the status daemon, and
+NotebookLM sync use cross-platform Go APIs. Windows users still need local
+dependencies for the commands they run, such as Git for fast repository file
+discovery, Ollama for `ask` and `agent`, and Node/npm or `nlm` for NotebookLM
+sync backends.
+
 ## Usage
 
 Initialize Clyde's config file:
@@ -87,6 +101,27 @@ clyde completion zsh > /opt/homebrew/share/zsh/site-functions/_clyde
 clyde completion bash > ~/.clyde-completion.bash
 clyde completion fish > ~/.config/fish/completions/clyde.fish
 ```
+
+PowerShell completion can be loaded for the current session:
+
+```powershell
+clyde completion powershell | Out-String | Invoke-Expression
+```
+
+To make PowerShell completion persistent, add that line to `$PROFILE`.
+
+Additional completion targets are available for users of smaller shells and
+Windows command-line enhancers:
+
+| Shell | Command |
+| --- | --- |
+| Elvish | `clyde completion elvish > ~/.elvish/completions/clyde.elv` |
+| Nushell | `clyde completion nushell > clyde-completions.nu` |
+| Xonsh | `clyde completion xonsh > ~/.xonshrc.d/clyde-completions.xsh` |
+| Tcsh | `clyde completion tcsh >> ~/.tcshrc` |
+| Clink | `clyde completion clink > %LOCALAPPDATA%\\clink\\clyde.lua` |
+| Yash | `clyde completion yash >> ~/.yashrc` |
+| Oil/OSH/YSH | `clyde completion oil > ~/.config/oils/clyde-completions.sh` |
 
 Help surfaces are designed for both humans and automation:
 

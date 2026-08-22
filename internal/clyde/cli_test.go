@@ -221,19 +221,43 @@ func TestAboutIncludesProductLinks(t *testing.T) {
 }
 
 func TestCompletionCommandPrintsShellScript(t *testing.T) {
-	var out, errOut bytes.Buffer
-	status := Main([]string{"completion", "zsh"}, &out, &errOut)
-	if status != 0 {
-		t.Fatalf("status=%d stderr=%s", status, errOut.String())
+	tests := []struct {
+		shell string
+		want  string
+	}{
+		{shell: "bash", want: "complete -F _clyde_completion clyde"},
+		{shell: "zsh", want: "#compdef clyde"},
+		{shell: "fish", want: "complete -c clyde"},
+		{shell: "powershell", want: "Register-ArgumentCompleter"},
+		{shell: "pwsh", want: "Register-ArgumentCompleter"},
+		{shell: "elvish", want: "edit:completion:arg-completer[clyde]"},
+		{shell: "nushell", want: `extern "clyde"`},
+		{shell: "nu", want: `extern "clyde"`},
+		{shell: "xonsh", want: "add_one_completer"},
+		{shell: "tcsh", want: "complete clyde"},
+		{shell: "clink", want: `clink.argmatcher("clyde")`},
+		{shell: "yash", want: "completion//argument/clyde"},
+		{shell: "oil", want: "Oil/OSH/YSH completion"},
+		{shell: "osh", want: "Oil/OSH/YSH completion"},
+		{shell: "ysh", want: "Oil/OSH/YSH completion"},
 	}
-	if !strings.Contains(out.String(), "#compdef clyde") || !strings.Contains(out.String(), "agent:scan repo") {
-		t.Fatalf("unexpected completion output: %s", out.String())
+	for _, tt := range tests {
+		t.Run(tt.shell, func(t *testing.T) {
+			var out, errOut bytes.Buffer
+			status := Main([]string{"completion", tt.shell}, &out, &errOut)
+			if status != 0 {
+				t.Fatalf("status=%d stderr=%s", status, errOut.String())
+			}
+			if !strings.Contains(out.String(), tt.want) || !strings.Contains(out.String(), "agent") {
+				t.Fatalf("unexpected completion output: %s", out.String())
+			}
+		})
 	}
 }
 
 func TestCompletionRejectsUnsupportedShell(t *testing.T) {
 	var out, errOut bytes.Buffer
-	status := Main([]string{"completion", "powershell"}, &out, &errOut)
+	status := Main([]string{"completion", "planet9"}, &out, &errOut)
 	if status != 1 {
 		t.Fatalf("expected failure")
 	}

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v0.2.2 - 2026-08-22
+
+- Add PowerShell completion support for Windows and cross-platform `pwsh`.
+- Add completion generators for Elvish, Nushell, Xonsh, Tcsh, Clink, Yash, and
+  Oil-family shells.
+- Document Windows install/support expectations and PowerShell completion setup.
+- Add Windows to the GitHub Actions test matrix.
+
 ## v0.2.1 - 2026-08-22
 
 - Add a standard release procedure that starts with checking and committing any
