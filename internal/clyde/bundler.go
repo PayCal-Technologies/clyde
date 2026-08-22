@@ -3,6 +3,7 @@ package clyde
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -67,7 +68,7 @@ func WriteBundle(result ScanResult, outDir string, maxChunkChars int, bookTitle,
 		return Manifest{}, errf("out dir must be a directory, not a file: %s", outDir)
 	}
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		return Manifest{}, err
+		return Manifest{}, fmt.Errorf("create bundle output directory %s: %w", outDir, err)
 	}
 	chunks := MakeChunks(result, maxChunkChars, bookTitle)
 	manifest := Manifest{
@@ -90,24 +91,38 @@ func WriteBundle(result ScanResult, outDir string, maxChunkChars int, bookTitle,
 	}
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
-		return Manifest{}, err
+		return Manifest{}, fmt.Errorf("encode bundle manifest: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(outDir, "manifest.json"), append(data, '\n'), 0o644); err != nil {
-		return Manifest{}, err
+	manifestPath := filepath.Join(outDir, "manifest.json")
+	if err := os.WriteFile(manifestPath, append(data, '\n'), 0o644); err != nil {
+		return Manifest{}, fmt.Errorf("write bundle manifest %s: %w", manifestPath, err)
 	}
-	file, err := os.Create(filepath.Join(outDir, "chunks.jsonl"))
+	chunksPath := filepath.Join(outDir, "chunks.jsonl")
+	file, err := os.Create(chunksPath)
 	if err != nil {
-		return Manifest{}, err
+		return Manifest{}, fmt.Errorf("create bundle chunks %s: %w", chunksPath, err)
 	}
-	defer file.Close()
 	writer := bufio.NewWriter(file)
 	encoder := json.NewEncoder(writer)
+	var writeErr error
 	for _, chunk := range chunks {
 		if err := encoder.Encode(chunk); err != nil {
-			return Manifest{}, err
+			writeErr = fmt.Errorf("encode bundle chunk %s %d/%d: %w", chunk.Path, chunk.ChunkIndex, chunk.ChunkTotal, err)
+			break
 		}
 	}
-	return manifest, writer.Flush()
+	if writeErr == nil {
+		if err := writer.Flush(); err != nil {
+			writeErr = fmt.Errorf("flush bundle chunks %s: %w", chunksPath, err)
+		}
+	}
+	if err := file.Close(); err != nil && writeErr == nil {
+		writeErr = fmt.Errorf("close bundle chunks %s: %w", chunksPath, err)
+	}
+	if writeErr != nil {
+		return Manifest{}, writeErr
+	}
+	return manifest, nil
 }
 
 func splitText(text string, maxChunkChars int) []string {

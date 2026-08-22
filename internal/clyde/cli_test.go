@@ -103,3 +103,29 @@ func TestSubcommandHelpExitsCleanly(t *testing.T) {
 		t.Fatalf("unexpected help: %s", out.String())
 	}
 }
+
+func TestTopLevelHelpIncludesProductLinks(t *testing.T) {
+	var out, errOut bytes.Buffer
+	status := Main([]string{"--help"}, &out, &errOut)
+	if status != 0 {
+		t.Fatalf("status=%d stderr=%s", status, errOut.String())
+	}
+	for _, want := range []string{productHomeURL, productHelpURL, productGitHubURL, productCreatorURL} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("help missing %q: %s", want, out.String())
+		}
+	}
+}
+
+func TestAboutIncludesProductLinks(t *testing.T) {
+	var out, errOut bytes.Buffer
+	status := Main([]string{"--about"}, &out, &errOut)
+	if status != 0 {
+		t.Fatalf("status=%d stderr=%s", status, errOut.String())
+	}
+	for _, want := range []string{productName, productDescription, productHomeURL, productGitHubURL} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("about missing %q: %s", want, out.String())
+		}
+	}
+}

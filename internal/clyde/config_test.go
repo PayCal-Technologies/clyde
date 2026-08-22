@@ -52,6 +52,68 @@ func TestLoadConfigEnvOverridesFile(t *testing.T) {
 	}
 }
 
+func TestLoadConfigRejectsInvalidOllamaURL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("CLYDE_CONFIG", path)
+	mustWrite(t, path, `{"ollama_url":"not-a-url"}`)
+
+	_, _, err := LoadConfig()
+
+	if err == nil || !strings.Contains(err.Error(), "ollama_url") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadConfigRejectsInvalidEnvOllamaURL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("CLYDE_CONFIG", path)
+	t.Setenv("CLYDE_OLLAMA_URL", "ftp://example.com")
+
+	_, _, err := LoadConfig()
+
+	if err == nil || !strings.Contains(err.Error(), "ollama_url") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadConfigRejectsBlankModel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("CLYDE_CONFIG", path)
+	mustWrite(t, path, `{"model":"   "}`)
+
+	_, _, err := LoadConfig()
+
+	if err == nil || !strings.Contains(err.Error(), "model") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadConfigRejectsNegativeLimits(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("CLYDE_CONFIG", path)
+	mustWrite(t, path, `{"max_file_bytes":-1}`)
+
+	_, _, err := LoadConfig()
+
+	if err == nil || !strings.Contains(err.Error(), "max_file_bytes") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadConfigDefaultsZeroValues(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("CLYDE_CONFIG", path)
+	mustWrite(t, path, `{"num_ctx":0,"max_chunk_chars":0}`)
+
+	cfg, _, err := LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.NumCtx != DefaultConfig().NumCtx || cfg.MaxChunkChars != DefaultConfig().MaxChunkChars {
+		t.Fatalf("zero values did not default: %#v", cfg)
+	}
+}
+
 func TestConfigCommandInitAndShow(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	t.Setenv("CLYDE_CONFIG", path)

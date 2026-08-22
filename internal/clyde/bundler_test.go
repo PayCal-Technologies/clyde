@@ -70,6 +70,38 @@ func TestWriteBundleRecordsBookMetadata(t *testing.T) {
 	}
 }
 
+func TestWriteBundleWritesChunkRecords(t *testing.T) {
+	dir := t.TempDir()
+	_, err := WriteBundle(ScanResult{
+		Repo: dir,
+		Files: []FileRecord{{
+			Path:   filepath.Join(dir, "app.go"),
+			Rel:    "app.go",
+			Size:   22,
+			SHA256: "abc123",
+			Text:   "package main\nfunc main() {}\n",
+		}},
+	}, filepath.Join(dir, "out"), 100, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "out", "chunks.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 chunk line, got %d: %s", len(lines), string(data))
+	}
+	var chunk ChunkRecord
+	if err := json.Unmarshal([]byte(lines[0]), &chunk); err != nil {
+		t.Fatal(err)
+	}
+	if chunk.Path != "app.go" || chunk.ChunkTotal != 1 || !strings.Contains(chunk.Text, "Repository: ") {
+		t.Fatalf("unexpected chunk: %#v", chunk)
+	}
+}
+
 func TestWriteBundleRejectsFileOutputPath(t *testing.T) {
 	dir := t.TempDir()
 	outFile := filepath.Join(dir, "bundle.json")

@@ -3,6 +3,13 @@
 Clyde is a small Go MCP-client harness for moving auditable repository source bundles
 into Google NotebookLM.
 
+Official resources:
+
+- Clyde homepage: [paycaltech.com/clyde](https://paycaltech.com/clyde)
+- Clyde help: [paycaltech.com/clyde/help](https://paycaltech.com/clyde/help)
+- GitHub: [github.com/PayCal-Technologies/clyde](https://github.com/PayCal-Technologies/clyde)
+- Created by [PayCal Technologies](https://paycaltech.com)
+
 It is intentionally conservative:
 
 - `preview` reports what would be included or skipped.
@@ -38,6 +45,7 @@ Initialize Clyde's config file:
 ```bash
 clyde config init
 clyde config show
+clyde --about
 ```
 
 By default Clyde reads `~/.config/clyde/config.json`. Set `CLYDE_CONFIG` to use
@@ -59,6 +67,25 @@ Example config:
   "max_chunk_chars": 18000
 }
 ```
+
+Configuration reference:
+
+| Field | Purpose | Default |
+| --- | --- | --- |
+| `ollama_url` | Ollama API base URL. Must be `http` or `https` with a host. | `http://127.0.0.1:11434` |
+| `model` | Preferred local Ollama model for `ask` and `agent`. | `qwen2.5-coder:7b` |
+| `num_ctx` | Context window sent to Ollama generation requests. | `8192` |
+| `ask_timeout_seconds` | Timeout for direct `ask` requests. | `120` |
+| `agent_timeout_seconds` | Timeout for repo-scanning `agent` requests. | `180` |
+| `max_context_chars` | Maximum direct prompt/context size Clyde will prepare. | `16000` |
+| `max_file_bytes` | Per-file source scanning cap. | `250000` |
+| `max_chunk_chars` | Source bundle chunk size for NotebookLM upload records. | `18000` |
+
+Omitted or zero numeric config values are replaced with defaults. Negative
+numeric values, blank model names, invalid Ollama URLs, and oversized limits are
+rejected during config load. `CLYDE_OLLAMA_URL` and `CLYDE_MODEL` override the
+file and are validated the same way. `CLYDE_CONFIG` points Clyde at an alternate
+config file.
 
 Preview a repo:
 

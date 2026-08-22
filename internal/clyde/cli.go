@@ -13,6 +13,17 @@ import (
 	"time"
 )
 
+const (
+	productName        = "Clyde"
+	productVersion     = "0.1.0"
+	productDescription = "local repository review, bundling, and NotebookLM sync harness"
+	productHomeURL     = "https://paycaltech.com/clyde"
+	productHelpURL     = "https://paycaltech.com/clyde/help"
+	productGitHubURL   = "https://github.com/PayCal-Technologies/clyde"
+	productCreator     = "PayCal Technologies"
+	productCreatorURL  = "https://paycaltech.com"
+)
+
 func Main(args []string, stdout, stderr io.Writer) int {
 	return MainWithInput(args, os.Stdin, stdout, stderr)
 }
@@ -35,6 +46,10 @@ func MainWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		printHelp(stdout)
 		return 0
 	}
+	if args[0] == "--about" || args[0] == "about" {
+		printAbout(stdout)
+		return 0
+	}
 	if err := run(args, stdin, stdout, stderr); err != nil {
 		if err == flag.ErrHelp {
 			return 0
@@ -47,6 +62,9 @@ func MainWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	switch args[0] {
+	case "about":
+		printAbout(stdout)
+		return nil
 	case "tui":
 		return RunTUI(stdin, stdout, stderr)
 	case "config":
@@ -537,7 +555,7 @@ func cmdAgent(args []string, stdin io.Reader, out io.Writer) error {
 }
 
 func printHelp(out io.Writer) {
-	fmt.Fprintln(out, "usage: clyde {tui,config,preview,bundle,sync,daemon,status,book,models,ask,agent} ...")
+	fmt.Fprintln(out, "usage: clyde {about,tui,config,preview,bundle,sync,daemon,status,book,models,ask,agent} ...")
 	fmt.Fprintln(out, "run clyde with no arguments in a terminal to open the TUI")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "examples:")
@@ -546,6 +564,24 @@ func printHelp(out io.Writer) {
 	fmt.Fprintln(out, "  clyde config show")
 	fmt.Fprintln(out, "  clyde ask --model qwen2.5-coder:7b --stdin")
 	fmt.Fprintln(out, "  clyde agent . --model qwen2.5-coder:7b 'review this repo'")
+	fmt.Fprintln(out)
+	printLinks(out)
+	fmt.Fprintln(out, "run `clyde --about` for product details")
+}
+
+func printAbout(out io.Writer) {
+	fmt.Fprintf(out, "%s %s\n", productName, productVersion)
+	fmt.Fprintln(out, productDescription)
+	fmt.Fprintf(out, "Created by %s\n", productCreator)
+	fmt.Fprintln(out)
+	printLinks(out)
+}
+
+func printLinks(out io.Writer) {
+	fmt.Fprintf(out, "Home: %s\n", productHomeURL)
+	fmt.Fprintf(out, "Help: %s\n", productHelpURL)
+	fmt.Fprintf(out, "GitHub: %s\n", productGitHubURL)
+	fmt.Fprintf(out, "PayCal Technologies: %s\n", productCreatorURL)
 }
 
 func cmdConfig(args []string, out io.Writer) error {

@@ -85,7 +85,7 @@ func (c *MCPClient) initialize(ctx context.Context) error {
 	_, err := c.Request(ctx, "initialize", map[string]any{
 		"protocolVersion": "2024-11-05",
 		"capabilities":    map[string]any{},
-		"clientInfo":      map[string]string{"name": "clyde", "version": "0.1.0"},
+		"clientInfo":      map[string]string{"name": "clyde", "version": productVersion},
 	})
 	if err != nil {
 		return err
