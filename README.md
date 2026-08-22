@@ -1,6 +1,6 @@
 # Clyde
 
-Clyde is a small Go MCP harness for moving auditable repository source bundles
+Clyde is a small Go MCP-client harness for moving auditable repository source bundles
 into Google NotebookLM.
 
 It is intentionally conservative:
