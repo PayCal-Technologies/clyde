@@ -341,6 +341,9 @@ func printScanReport(out io.Writer, report scanReport) {
 }
 
 func cmdBundle(args []string, out io.Writer) error {
+	if len(args) > 0 && args[0] == "verify" {
+		return cmdBundleVerify(args[1:], out)
+	}
 	cfg := DefaultConfig()
 	if !isHelpArgs(args) {
 		loaded, _, err := LoadConfig()
@@ -355,8 +358,11 @@ func cmdBundle(args []string, out io.Writer) error {
 	outDir := fs.String("out", ".clyde/out", "directory for manifest.json and chunks.jsonl")
 	subject := fs.String("subject", "", "generate a dated NotebookLM book title")
 	bookTitle := fs.String("book-title", "", "use an exact NotebookLM book title")
+	force := fs.Bool("force", false, "replace existing bundle files")
+	requireSecretScan := fs.Bool("require-secret-scan", false, "fail unless --secret-scan-command completes successfully")
+	secretScanCommand := fs.String("secret-scan-command", "", "external secret scanner command; {repo} expands to the repository path")
 	addScanFlags(fs, &flags)
-	if err := fs.Parse(interspersedArgs(args, map[string]bool{})); err != nil {
+	if err := fs.Parse(interspersedArgs(args, map[string]bool{"force": true, "require-secret-scan": true})); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -367,6 +373,9 @@ func cmdBundle(args []string, out io.Writer) error {
 	}
 	if err := validateScanFlags(flags); err != nil {
 		return err
+	}
+	if *requireSecretScan && strings.TrimSpace(*secretScanCommand) == "" {
+		return errf("--require-secret-scan requires --secret-scan-command")
 	}
 	var plan *BookPlan
 	if *subject != "" || *bookTitle != "" {
@@ -384,11 +393,20 @@ func cmdBundle(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if strings.TrimSpace(*secretScanCommand) != "" {
+		if err := runSecretScanCommand(context.Background(), *secretScanCommand, result.Repo); err != nil {
+			return err
+		}
+	}
 	title, slug := "", ""
 	if plan != nil {
 		title, slug = plan.Title(), plan.Slug()
 	}
-	manifest, err := WriteBundle(result, *outDir, flags.maxChunkChars, title, slug)
+	manifest, err := WriteBundleWithOptions(result, *outDir, flags.maxChunkChars, title, slug, WriteBundleOptions{
+		Force:             *force,
+		RequireSecretScan: *requireSecretScan,
+		SecretScanCommand: *secretScanCommand,
+	})
 	if err != nil {
 		return err
 	}
@@ -398,7 +416,42 @@ func cmdBundle(args []string, out io.Writer) error {
 	}
 	fmt.Fprintf(out, "\nWrote: %s\n", filepath.Join(*outDir, "manifest.json"))
 	fmt.Fprintf(out, "Wrote: %s\n", filepath.Join(*outDir, "chunks.jsonl"))
+	fmt.Fprintf(out, "Bundle digest: %s\n", manifest.BundleSHA256)
 	fmt.Fprintln(out, "Review manifest.json before running sync.")
+	return nil
+}
+
+func cmdBundleVerify(args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("bundle verify", flag.ContinueOnError)
+	fs.SetOutput(out)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errf("bundle verify requires BUNDLE_DIR")
+	}
+	bundle, err := LoadBundle(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "Bundle verified: %s\n", fs.Arg(0))
+	fmt.Fprintf(out, "Bundle digest: %s\n", bundle.Digest)
+	fmt.Fprintf(out, "Included files: %d\n", bundle.Manifest.FileCount)
+	fmt.Fprintf(out, "Skipped files: %d\n", len(bundle.Manifest.Skips))
+	fmt.Fprintf(out, "Chunks: %d\n", bundle.Manifest.ChunkCount)
+	fmt.Fprintf(out, "Total bytes: %s\n", formatBytes(bundle.Manifest.TotalBytes))
+	return nil
+}
+
+func runSecretScanCommand(ctx context.Context, commandLine, repo string) error {
+	commandLine = strings.ReplaceAll(commandLine, "{repo}", repo)
+	command := shellFields(commandLine)
+	if len(command) == 0 {
+		return errf("secret scan command must not be empty")
+	}
+	if _, err := runCommand(ctx, command, nil, 10*time.Minute); err != nil {
+		return errf("secret scan command failed: %w", err)
+	}
 	return nil
 }
 
@@ -417,6 +470,10 @@ func cmdSync(args []string, out, errOut io.Writer) error {
 	notebookID := fs.String("notebook-id", "", "NotebookLM notebook id")
 	notebookURL := fs.String("notebook-url", "", "NotebookLM notebook URL")
 	approve := fs.Bool("approve-upload", false, "approve upload")
+	bundleDir := fs.String("bundle", "", "upload an already reviewed Clyde bundle directory")
+	approveDigest := fs.String("approve-digest", "", "approve upload of a specific bundle digest")
+	receiptPath := fs.String("receipt", "", "write sync receipt JSON to this path")
+	resume := fs.Bool("resume", false, "resume from an existing matching sync receipt")
 	backend := fs.String("backend", "mcp", "NotebookLM backend: mcp or nlm")
 	mcpCommand := fs.String("mcp-command", "npx -y notebooklm-mcp@2.0.0", "command used for MCP backend")
 	nlmCommand := fs.String("nlm-command", "nlm", "command used for nlm backend")
@@ -433,12 +490,16 @@ func cmdSync(args []string, out, errOut io.Writer) error {
 		"approve-upload":          true,
 		"delete-existing-sources": true,
 		"quiet-progress":          true,
+		"resume":                  true,
 	}
 	if err := fs.Parse(interspersedArgs(args, boolFlags)); err != nil {
 		return err
 	}
-	if fs.NArg() != 1 {
+	if *bundleDir == "" && fs.NArg() != 1 {
 		return errf("sync requires REPO")
+	}
+	if *bundleDir != "" && fs.NArg() > 1 {
+		return errf("sync with --bundle accepts at most one REPO label")
 	}
 	if !*approve {
 		return errf("sync requires --approve-upload")
@@ -467,6 +528,12 @@ func cmdSync(args []string, out, errOut io.Writer) error {
 	if err := validateScanFlags(flags); err != nil {
 		return err
 	}
+	if *bundleDir != "" && strings.TrimSpace(*approveDigest) == "" {
+		return errf("sync with --bundle requires --approve-digest")
+	}
+	if *resume && strings.TrimSpace(*receiptPath) == "" && *bundleDir == "" {
+		return errf("--resume requires --receipt for live-repository sync")
+	}
 	var plan *BookPlan
 	if *subject != "" || *bookTitle != "" {
 		p, err := planFromArgs(*subject, *bookTitle)
@@ -481,11 +548,35 @@ func cmdSync(args []string, out, errOut io.Writer) error {
 		title = plan.Title()
 		prefix = plan.SourcePrefix()
 	}
-	result, chunks, err := scanAndChunk(fs.Arg(0), flags, title)
-	if err != nil {
-		return err
+	var chunks []ChunkRecord
+	var bundleDigest string
+	if *bundleDir != "" {
+		bundle, err := LoadBundle(*bundleDir)
+		if err != nil {
+			return err
+		}
+		if bundle.Digest != *approveDigest {
+			return errf("approved digest does not match bundle: approved=%s bundle=%s", *approveDigest, bundle.Digest)
+		}
+		chunks = bundle.Chunks
+		bundleDigest = bundle.Digest
+		if *receiptPath == "" {
+			*receiptPath = filepath.Join(*bundleDir, "sync-receipt.json")
+		}
+		fmt.Fprintf(out, "Bundle: %s\n", *bundleDir)
+		fmt.Fprintf(out, "Bundle digest: %s\n", bundleDigest)
+		fmt.Fprintf(out, "Included files: %d\n", bundle.Manifest.FileCount)
+		fmt.Fprintf(out, "Skipped files: %d\n", len(bundle.Manifest.Skips))
+		fmt.Fprintf(out, "Chunks: %d\n", bundle.Manifest.ChunkCount)
+		fmt.Fprintf(out, "Total bytes: %s\n", formatBytes(bundle.Manifest.TotalBytes))
+	} else {
+		result, liveChunks, err := scanAndChunk(fs.Arg(0), flags, title)
+		if err != nil {
+			return err
+		}
+		chunks = liveChunks
+		printSummary(out, result, len(chunks), flags)
 	}
-	printSummary(out, result, len(chunks), flags)
 	if plan != nil {
 		printBookPlan(out, *plan)
 	}
@@ -513,6 +604,9 @@ func cmdSync(args []string, out, errOut io.Writer) error {
 		Progress:              sink,
 		JobID:                 *jobID,
 		TitlePrefix:           prefix,
+		BundleDigest:          bundleDigest,
+		ReceiptPath:           *receiptPath,
+		Resume:                *resume,
 	})
 	if err != nil {
 		return err
@@ -526,6 +620,12 @@ func cmdSync(args []string, out, errOut io.Writer) error {
 		suffix = " via " + *backend
 	}
 	fmt.Fprintf(out, "\nUploaded %d chunks to notebook %s%s.\n", count, target, suffix)
+	if bundleDigest != "" {
+		fmt.Fprintf(out, "Uploaded bundle digest: %s\n", bundleDigest)
+	}
+	if *receiptPath != "" {
+		fmt.Fprintf(out, "Sync receipt: %s\n", *receiptPath)
+	}
 	return nil
 }
 
@@ -960,38 +1060,6 @@ func printHelp(out io.Writer) {
 	fmt.Fprintln(out)
 	printLinks(out)
 	fmt.Fprintln(out, "run `clyde --about` for product details")
-}
-
-type commandInfo struct {
-	Name     string   `json:"name"`
-	Category string   `json:"category"`
-	Summary  string   `json:"summary"`
-	Access   string   `json:"access"`
-	Network  string   `json:"network"`
-	Syntax   string   `json:"syntax"`
-	Examples []string `json:"examples"`
-}
-
-var commandCatalog = []commandInfo{
-	{Name: "about", Category: "Core", Summary: "Show Clyde product details and official links.", Access: "Read-only", Network: "None", Syntax: "clyde --about\nclyde about", Examples: []string{"clyde --about", "clyde about"}},
-	{Name: "help", Category: "Core", Summary: "Show human-readable help or a JSON command catalog.", Access: "Read-only", Network: "None", Syntax: "clyde help [--json|COMMAND]", Examples: []string{"clyde help", "clyde help agent", "clyde help --json"}},
-	{Name: "completion", Category: "Packaging", Summary: "Generate shell completion for Bash, Zsh, Fish, PowerShell, Elvish, Nushell, Xonsh, Tcsh, Clink, Yash, or Oil.", Access: "Read-only", Network: "None", Syntax: "clyde completion {bash|zsh|fish|powershell|pwsh|elvish|nushell|nu|xonsh|tcsh|clink|yash|oil|osh|ysh}", Examples: []string{"clyde completion zsh > /opt/homebrew/share/zsh/site-functions/_clyde", "clyde completion powershell | Out-String | Invoke-Expression", "clyde completion nushell > clyde-completions.nu"}},
-	{Name: "doctor", Category: "Diagnostics", Summary: "Check Clyde configuration, platform, PATH tools, Ollama, and optional repo scan readiness.", Access: "Read-only", Network: "Local Ollama", Syntax: "clyde doctor [REPO] [--json] [--ollama-timeout SECONDS]", Examples: []string{"clyde doctor", "clyde doctor . --json"}},
-	{Name: "tui", Category: "Interactive", Summary: "Open Clyde's dependency-free terminal UI.", Access: "Local interactive", Network: "Optional local Ollama", Syntax: "clyde tui", Examples: []string{"clyde", "clyde tui"}},
-	{Name: "config", Category: "Configuration", Summary: "Show, initialize, or print the Clyde configuration path.", Access: "Reads or writes local config", Network: "None", Syntax: "clyde config {show|init|path}", Examples: []string{"clyde config show", "clyde config init", "clyde config path"}},
-	{Name: "config init", Category: "Configuration", Summary: "Write Clyde's default configuration file.", Access: "Writes local config", Network: "None", Syntax: "clyde config init", Examples: []string{"clyde config init"}},
-	{Name: "config path", Category: "Configuration", Summary: "Print the config file path Clyde will use.", Access: "Read-only", Network: "None", Syntax: "clyde config path", Examples: []string{"clyde config path"}},
-	{Name: "config show", Category: "Configuration", Summary: "Print the effective Clyde configuration as JSON.", Access: "Read-only", Network: "None", Syntax: "clyde config show", Examples: []string{"clyde config show"}},
-	{Name: "preview", Category: "Repository Bundles", Summary: "Report included and skipped repository files before bundling or upload.", Access: "Read-only", Network: "None", Syntax: "clyde preview REPO [scan flags] [--json]", Examples: []string{"clyde preview .", "clyde preview . --include 'internal/**/*.go' --json"}},
-	{Name: "scan-report", Category: "Repository Bundles", Summary: "Summarize repository scan shape with largest files, extensions, skip reasons, and chunk counts.", Access: "Read-only", Network: "None", Syntax: "clyde scan-report REPO [scan flags] [--json] [--top N]", Examples: []string{"clyde scan-report .", "clyde scan-report . --json", "clyde scan-report . --top 20"}},
-	{Name: "bundle", Category: "Repository Bundles", Summary: "Write a local manifest and source chunks for review.", Access: "Writes local files", Network: "None", Syntax: "clyde bundle REPO --out DIR [scan flags]", Examples: []string{"clyde bundle . --out .clyde/out"}},
-	{Name: "sync", Category: "NotebookLM Sync", Summary: "Upload scanned repository chunks to NotebookLM after explicit approval.", Access: "Uploads repository chunks", Network: "NotebookLM backend", Syntax: "clyde sync REPO --notebook-id ID --approve-upload", Examples: []string{"clyde sync . --notebook-id nb --approve-upload"}},
-	{Name: "daemon", Category: "Status", Summary: "Start the localhost-only JSON-RPC status daemon.", Access: "Starts local server", Network: "Localhost only", Syntax: "clyde daemon [--host HOST] [--port PORT]", Examples: []string{"clyde daemon"}},
-	{Name: "status", Category: "Status", Summary: "Read Clyde daemon progress for a job.", Access: "Read-only", Network: "Localhost by default", Syntax: "clyde status [--job-id ID] [--json] [--watch]", Examples: []string{"clyde status", "clyde status --job-id clyde-sync"}},
-	{Name: "book", Category: "NotebookLM Sync", Summary: "Generate a dated NotebookLM book title and slug.", Access: "Read-only", Network: "None", Syntax: "clyde book SUBJECT...", Examples: []string{"clyde book Clyde self feedback"}},
-	{Name: "models", Category: "Local Models", Summary: "List local Ollama models and the selected default.", Access: "Read-only", Network: "Local Ollama", Syntax: "clyde models [--json]", Examples: []string{"clyde models", "clyde models --json"}},
-	{Name: "ask", Category: "Local Models", Summary: "Send a direct prompt to the selected local Ollama model.", Access: "Sends prompt to Ollama", Network: "Configured Ollama", Syntax: "clyde ask [flags] PROMPT", Examples: []string{"clyde ask 'Review this function'", "cat prompt.md | clyde ask --stdin"}},
-	{Name: "agent", Category: "Local Models", Summary: "Scan repository context and ask a local model for feedback.", Access: "Reads repo and sends selected context", Network: "Local Ollama by default", Syntax: "clyde agent REPO [scan flags] [PROMPT]", Examples: []string{"clyde agent . 'Review this repo'", "clyde agent . --include 'internal/**/*.go' --prompt-file review.md"}},
 }
 
 func cmdHelp(args []string, stdin io.Reader, out, errOut io.Writer) error {
@@ -1522,10 +1590,10 @@ _clyde_completion() {
       COMPREPLY=( $(compgen -W "--include --exclude --max-file-bytes --max-chunk-chars --json --top --help" -- "${cur}") )
       ;;
     bundle)
-      COMPREPLY=( $(compgen -W "--out --subject --book-title --include --exclude --max-file-bytes --max-chunk-chars --help" -- "${cur}") )
+      COMPREPLY=( $(compgen -W "verify --out --subject --book-title --force --secret-scan-command --require-secret-scan --include --exclude --max-file-bytes --max-chunk-chars --help" -- "${cur}") )
       ;;
     sync)
-      COMPREPLY=( $(compgen -W "--notebook-id --notebook-url --approve-upload --backend --mcp-command --nlm-command --delete-existing-sources --mcp-timeout --status-url --quiet-progress --job-id --subject --book-title --include --exclude --max-file-bytes --max-chunk-chars --help" -- "${cur}") )
+      COMPREPLY=( $(compgen -W "--notebook-id --notebook-url --approve-upload --bundle --approve-digest --receipt --resume --backend --mcp-command --nlm-command --delete-existing-sources --mcp-timeout --status-url --quiet-progress --job-id --subject --book-title --include --exclude --max-file-bytes --max-chunk-chars --help" -- "${cur}") )
       ;;
     models)
       COMPREPLY=( $(compgen -W "--ollama-url --timeout --json --help" -- "${cur}") )
@@ -1558,8 +1626,8 @@ _clyde() {
     'tui:open the terminal UI'
     'config:manage Clyde config'
     'preview:show files Clyde would scan'
-    'bundle:write manifest.json and chunks.jsonl'
-    'sync:upload chunks to NotebookLM'
+    'bundle:write or verify digest-bound manifest.json and chunks.jsonl'
+    'sync:upload verified bundle chunks to NotebookLM'
     'daemon:serve sync status'
     'status:read sync status'
     'book:plan a dated NotebookLM book name'
@@ -1584,8 +1652,8 @@ _clyde() {
         config) _values 'config command' path show init ;;
         preview) _arguments '--include=[]' '--exclude=[]' '--max-file-bytes=[]' '--max-chunk-chars=[]' '--show-files=[]' '--show-skips=[]' '--json' '--help' ;;
         scan-report) _arguments '--include=[]' '--exclude=[]' '--max-file-bytes=[]' '--max-chunk-chars=[]' '--json' '--top=[]' '--help' ;;
-        bundle) _arguments '--out=[]' '--subject=[]' '--book-title=[]' '--include=[]' '--exclude=[]' '--max-file-bytes=[]' '--max-chunk-chars=[]' '--help' ;;
-        sync) _arguments '--notebook-id=[]' '--notebook-url=[]' '--approve-upload' '--backend=[mcp or nlm]:backend:(mcp nlm)' '--mcp-command=[]' '--nlm-command=[]' '--delete-existing-sources' '--mcp-timeout=[]' '--status-url=[]' '--quiet-progress' '--job-id=[]' '--subject=[]' '--book-title=[]' '--include=[]' '--exclude=[]' '--max-file-bytes=[]' '--max-chunk-chars=[]' '--help' ;;
+        bundle) _arguments '1:subcommand:(verify)' '--out=[]' '--subject=[]' '--book-title=[]' '--force' '--secret-scan-command=[]' '--require-secret-scan' '--include=[]' '--exclude=[]' '--max-file-bytes=[]' '--max-chunk-chars=[]' '--help' ;;
+        sync) _arguments '--notebook-id=[]' '--notebook-url=[]' '--approve-upload' '--bundle=[]' '--approve-digest=[]' '--receipt=[]' '--resume' '--backend=[mcp or nlm]:backend:(mcp nlm)' '--mcp-command=[]' '--nlm-command=[]' '--delete-existing-sources' '--mcp-timeout=[]' '--status-url=[]' '--quiet-progress' '--job-id=[]' '--subject=[]' '--book-title=[]' '--include=[]' '--exclude=[]' '--max-file-bytes=[]' '--max-chunk-chars=[]' '--help' ;;
         models) _arguments '--ollama-url=[]' '--timeout=[]' '--json' '--help' ;;
         ask) _arguments '--model=[]' '--ollama-url=[]' '--timeout=[]' '--num-ctx=[]' '--no-stream' '--prompt-file=[]' '--stdin' '--help' ;;
         agent) _arguments '--model=[]' '--ollama-url=[]' '--timeout=[]' '--max-context-chars=[]' '--num-ctx=[]' '--no-stream' '--prompt-file=[]' '--stdin' '--allow-remote-ollama' '--include=[]' '--exclude=[]' '--max-file-bytes=[]' '--max-chunk-chars=[]' '--help' ;;
@@ -1622,9 +1690,16 @@ complete -c clyde -n "__fish_seen_subcommand_from scan-report" -l top -r
 complete -c clyde -n "__fish_seen_subcommand_from bundle" -l out -r
 complete -c clyde -n "__fish_seen_subcommand_from bundle" -l subject -r
 complete -c clyde -n "__fish_seen_subcommand_from bundle" -l book-title -r
+complete -c clyde -n "__fish_seen_subcommand_from bundle" -l force
+complete -c clyde -n "__fish_seen_subcommand_from bundle" -l secret-scan-command -r
+complete -c clyde -n "__fish_seen_subcommand_from bundle" -l require-secret-scan
 complete -c clyde -n "__fish_seen_subcommand_from sync" -l notebook-id -r
 complete -c clyde -n "__fish_seen_subcommand_from sync" -l notebook-url -r
 complete -c clyde -n "__fish_seen_subcommand_from sync" -l approve-upload
+complete -c clyde -n "__fish_seen_subcommand_from sync" -l bundle -r
+complete -c clyde -n "__fish_seen_subcommand_from sync" -l approve-digest -r
+complete -c clyde -n "__fish_seen_subcommand_from sync" -l receipt -r
+complete -c clyde -n "__fish_seen_subcommand_from sync" -l resume
 complete -c clyde -n "__fish_seen_subcommand_from sync" -l backend -xa "mcp nlm"
 complete -c clyde -n "__fish_seen_subcommand_from sync" -l delete-existing-sources
 complete -c clyde -n "__fish_seen_subcommand_from models" -l ollama-url -r
@@ -1661,8 +1736,8 @@ Register-ArgumentCompleter -Native -CommandName clyde -ScriptBlock {
     tui = 'open the terminal UI'
     config = 'manage Clyde config'
     preview = 'show files Clyde would scan'
-    bundle = 'write manifest.json and chunks.jsonl'
-    sync = 'upload chunks to NotebookLM'
+    bundle = 'write or verify digest-bound manifest.json and chunks.jsonl'
+    sync = 'upload verified bundle chunks to NotebookLM'
     daemon = 'serve sync status'
     status = 'read sync status'
     book = 'plan a dated NotebookLM book name'
@@ -1679,8 +1754,8 @@ Register-ArgumentCompleter -Native -CommandName clyde -ScriptBlock {
     preview = @('--include', '--exclude', '--max-file-bytes', '--max-chunk-chars', '--show-files', '--show-skips', '--json', '--help')
     'scan-report' = @('--include', '--exclude', '--max-file-bytes', '--max-chunk-chars', '--json', '--top', '--help')
     doctor = @('--json', '--ollama-timeout', '--help')
-    bundle = @('--out', '--subject', '--book-title', '--include', '--exclude', '--max-file-bytes', '--max-chunk-chars', '--help')
-    sync = @('--notebook-id', '--notebook-url', '--approve-upload', '--backend', '--mcp-command', '--nlm-command', '--delete-existing-sources', '--mcp-timeout', '--status-url', '--quiet-progress', '--job-id', '--subject', '--book-title', '--include', '--exclude', '--max-file-bytes', '--max-chunk-chars', '--help')
+    bundle = @('verify', '--out', '--subject', '--book-title', '--force', '--secret-scan-command', '--require-secret-scan', '--include', '--exclude', '--max-file-bytes', '--max-chunk-chars', '--help')
+    sync = @('--notebook-id', '--notebook-url', '--approve-upload', '--bundle', '--approve-digest', '--receipt', '--resume', '--backend', '--mcp-command', '--nlm-command', '--delete-existing-sources', '--mcp-timeout', '--status-url', '--quiet-progress', '--job-id', '--subject', '--book-title', '--include', '--exclude', '--max-file-bytes', '--max-chunk-chars', '--help')
     models = @('--ollama-url', '--timeout', '--json', '--help')
     ask = @('--model', '--ollama-url', '--timeout', '--num-ctx', '--no-stream', '--prompt-file', '--stdin', '--help')
     agent = @('--model', '--ollama-url', '--timeout', '--max-context-chars', '--num-ctx', '--no-stream', '--prompt-file', '--stdin', '--allow-remote-ollama', '--include', '--exclude', '--max-file-bytes', '--max-chunk-chars', '--help')
@@ -1727,8 +1802,8 @@ edit:completion:arg-completer[clyde] = [@words]{
     &preview=[--include --exclude --max-file-bytes --max-chunk-chars --show-files --show-skips --json --help]
     &scan-report=[--include --exclude --max-file-bytes --max-chunk-chars --json --top --help]
     &doctor=[--json --ollama-timeout --help]
-    &bundle=[--out --subject --book-title --include --exclude --max-file-bytes --max-chunk-chars --help]
-    &sync=[--notebook-id --notebook-url --approve-upload --backend --mcp-command --nlm-command --delete-existing-sources --mcp-timeout --status-url --quiet-progress --job-id --subject --book-title --include --exclude --max-file-bytes --max-chunk-chars --help]
+    &bundle=[verify --out --subject --book-title --force --secret-scan-command --require-secret-scan --include --exclude --max-file-bytes --max-chunk-chars --help]
+    &sync=[--notebook-id --notebook-url --approve-upload --bundle --approve-digest --receipt --resume --backend --mcp-command --nlm-command --delete-existing-sources --mcp-timeout --status-url --quiet-progress --job-id --subject --book-title --include --exclude --max-file-bytes --max-chunk-chars --help]
     &models=[--ollama-url --timeout --json --help]
     &ask=[--model --ollama-url --timeout --num-ctx --no-stream --prompt-file --stdin --help]
     &agent=[--model --ollama-url --timeout --max-context-chars --num-ctx --no-stream --prompt-file --stdin --allow-remote-ollama --include --exclude --max-file-bytes --max-chunk-chars --help]
@@ -1870,7 +1945,7 @@ complete clyde \
   'n/help/(about help completion doctor tui config preview scan-report bundle sync daemon status book models ask agent --json)/' \
   'n/config/(path show init)/' \
   'n/--backend/(mcp nlm)/' \
-  'c/--/(--include --exclude --max-file-bytes --max-chunk-chars --show-files --show-skips --json --top --ollama-timeout --out --subject --book-title --notebook-id --notebook-url --approve-upload --backend --mcp-command --nlm-command --delete-existing-sources --mcp-timeout --status-url --quiet-progress --job-id --model --ollama-url --timeout --num-ctx --no-stream --prompt-file --stdin --allow-remote-ollama --host --port --watch --interval --help)/'
+  'c/--/(--include --exclude --max-file-bytes --max-chunk-chars --show-files --show-skips --json --top --ollama-timeout --out --subject --book-title --force --secret-scan-command --require-secret-scan --notebook-id --notebook-url --approve-upload --bundle --approve-digest --receipt --resume --backend --mcp-command --nlm-command --delete-existing-sources --mcp-timeout --status-url --quiet-progress --job-id --model --ollama-url --timeout --num-ctx --no-stream --prompt-file --stdin --allow-remote-ollama --host --port --watch --interval --help)/'
 `
 
 const clinkCompletionScript = `-- Clink completion for clyde
@@ -1932,7 +2007,7 @@ function completion//argument/clyde {
     help:*) candidates="about help completion doctor tui config preview scan-report bundle sync daemon status book models ask agent --json" ;;
     config:*) candidates="path show init" ;;
     *:--backend) candidates="mcp nlm" ;;
-    *) candidates="about help completion doctor tui config preview scan-report bundle sync daemon status book models ask agent --include --exclude --max-file-bytes --max-chunk-chars --show-files --show-skips --json --top --ollama-timeout --out --subject --book-title --notebook-id --notebook-url --approve-upload --backend --mcp-command --nlm-command --delete-existing-sources --mcp-timeout --status-url --quiet-progress --job-id --model --ollama-url --timeout --num-ctx --no-stream --prompt-file --stdin --allow-remote-ollama --host --port --watch --interval --help" ;;
+    *) candidates="about help completion doctor tui config preview scan-report bundle sync daemon status book models ask agent --include --exclude --max-file-bytes --max-chunk-chars --show-files --show-skips --json --top --ollama-timeout --out --subject --book-title --force --secret-scan-command --require-secret-scan --notebook-id --notebook-url --approve-upload --bundle --approve-digest --receipt --resume --backend --mcp-command --nlm-command --delete-existing-sources --mcp-timeout --status-url --quiet-progress --job-id --model --ollama-url --timeout --num-ctx --no-stream --prompt-file --stdin --allow-remote-ollama --host --port --watch --interval --help" ;;
   esac
   for candidate in $candidates; do
     case "$candidate" in

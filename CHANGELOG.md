@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Bind reviewed bundles to uploaded content with per-chunk digests, an overall
+  bundle digest, `clyde bundle verify`, and `sync --bundle --approve-digest`.
+- Write bundle artifacts and sync receipts with private atomic filesystem
+  semantics, symlink refusal, and explicit `--force` overwrite behavior.
+- Add durable sync receipts, returned source ID capture, resumable bundle sync,
+  and pre-delete NotebookLM source inventories for `--delete-existing-sources`.
+- Add optional external secret-scanner enforcement for bundles with
+  `--require-secret-scan` and `--secret-scan-command`.
+- Add aggregate scanner limits, UTF-8-safe chunk splitting, MCP environment
+  allowlisting, bounded MCP stderr, and status daemon hardening.
+- Expand CI to gofmt, tests, race tests, vet, builds, CLI smoke, fuzz smoke,
+  staticcheck, and govulncheck; add tag-driven release archives, checksums,
+  SBOM, and provenance attestations.
+
 ## v0.2.5 - 2026-08-22
 
 - Add a complete, human-readable `TESTING.md` that documents the full Clyde

@@ -118,6 +118,61 @@ func TestBundleWritesManifest(t *testing.T) {
 	}
 }
 
+func TestBundleVerifyPrintsDigest(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "app.go"), "package main\n")
+	outDir := filepath.Join(dir, "out")
+	var out, errOut bytes.Buffer
+	status := Main([]string{"bundle", dir, "--out", outDir}, &out, &errOut)
+	if status != 0 {
+		t.Fatalf("status=%d stderr=%s", status, errOut.String())
+	}
+
+	out.Reset()
+	errOut.Reset()
+	status = Main([]string{"bundle", "verify", outDir}, &out, &errOut)
+	if status != 0 {
+		t.Fatalf("status=%d stderr=%s", status, errOut.String())
+	}
+	if !strings.Contains(out.String(), "Bundle verified") || !strings.Contains(out.String(), "sha256:") {
+		t.Fatalf("unexpected output: %s", out.String())
+	}
+}
+
+func TestBundleRequireSecretScanRequiresCommand(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "app.go"), "package main\n")
+
+	var out, errOut bytes.Buffer
+	status := Main([]string{"bundle", dir, "--out", filepath.Join(dir, "out"), "--require-secret-scan"}, &out, &errOut)
+	if status != 1 || !strings.Contains(errOut.String(), "--require-secret-scan requires --secret-scan-command") {
+		t.Fatalf("expected secret scan command failure, status=%d stderr=%s", status, errOut.String())
+	}
+}
+
+func TestBundleRecordsSecretScanCompletion(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "app.go"), "package main\n")
+	outDir := filepath.Join(dir, "out")
+
+	var out, errOut bytes.Buffer
+	status := Main([]string{"bundle", dir, "--out", outDir, "--secret-scan-command", "go env GOVERSION"}, &out, &errOut)
+	if status != 0 {
+		t.Fatalf("status=%d stderr=%s", status, errOut.String())
+	}
+	data, err := os.ReadFile(filepath.Join(outDir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest Manifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.SecretScan == nil || !manifest.SecretScan.Completed {
+		t.Fatalf("missing secret scan record: %#v", manifest.SecretScan)
+	}
+}
+
 func TestSyncDeleteExistingSourcesRequiresNLMBackend(t *testing.T) {
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, "app.go"), "package main\n")
@@ -130,6 +185,41 @@ func TestSyncDeleteExistingSourcesRequiresNLMBackend(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "--delete-existing-sources requires --backend nlm") {
 		t.Fatalf("unexpected stderr: %s", errOut.String())
+	}
+}
+
+func TestSyncBundleRequiresApprovedDigestMatch(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "app.go"), "package main\n")
+	outDir := filepath.Join(dir, "out")
+	manifest, err := WriteBundle(ScanResult{
+		Repo: dir,
+		Files: []FileRecord{{
+			Path:   filepath.Join(dir, "app.go"),
+			Rel:    "app.go",
+			Size:   13,
+			SHA256: "abc123",
+			Text:   "package main\n",
+		}},
+	}, outDir, 100, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut bytes.Buffer
+	status := Main([]string{"sync", "--bundle", outDir, "--notebook-id", "nb", "--approve-upload"}, &out, &errOut)
+	if status != 1 || !strings.Contains(errOut.String(), "requires --approve-digest") {
+		t.Fatalf("expected approve digest failure, status=%d stderr=%s", status, errOut.String())
+	}
+
+	out.Reset()
+	errOut.Reset()
+	status = Main([]string{"sync", "--bundle", outDir, "--notebook-id", "nb", "--approve-upload", "--approve-digest", "sha256:wrong"}, &out, &errOut)
+	if status != 1 || !strings.Contains(errOut.String(), "approved digest does not match bundle") {
+		t.Fatalf("expected digest mismatch, status=%d stderr=%s", status, errOut.String())
+	}
+	if manifest.BundleSHA256 == "" {
+		t.Fatalf("missing test bundle digest")
 	}
 }
 
@@ -199,13 +289,14 @@ func TestHelpJSONPrintsCommandCatalog(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.Product != productName || len(payload.Commands) != 19 {
+	if payload.Product != productName || len(payload.Commands) != 20 {
 		t.Fatalf("unexpected catalog: %#v", payload)
 	}
 	foundHelp := false
 	foundConfigInit := false
 	foundDoctor := false
 	foundScanReport := false
+	foundBundleVerify := false
 	for _, command := range payload.Commands {
 		if command.Name == "help" && command.Syntax != "" && len(command.Examples) > 0 {
 			foundHelp = true
@@ -219,9 +310,22 @@ func TestHelpJSONPrintsCommandCatalog(t *testing.T) {
 		if command.Name == "scan-report" && command.Category == "Repository Bundles" {
 			foundScanReport = true
 		}
+		if command.Name == "bundle verify" && command.Access == "Read-only" {
+			foundBundleVerify = true
+		}
 	}
-	if !foundHelp || !foundConfigInit || !foundDoctor || !foundScanReport {
+	if !foundHelp || !foundConfigInit || !foundDoctor || !foundScanReport || !foundBundleVerify {
 		t.Fatalf("expected commands missing from catalog: %#v", payload.Commands)
+	}
+}
+
+func TestVersionFileMatchesProductVersion(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "VERSION"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(data)) != productVersion {
+		t.Fatalf("VERSION=%q productVersion=%q", strings.TrimSpace(string(data)), productVersion)
 	}
 }
 

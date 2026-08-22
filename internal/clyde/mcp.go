@@ -24,7 +24,7 @@ type MCPClient struct {
 	reader  *bufio.Reader
 	nextID  int
 	framing string
-	stderr  bytes.Buffer
+	stderr  lockedLimitedBuffer
 	mu      sync.Mutex
 }
 
@@ -56,7 +56,7 @@ func (c *MCPClient) start(ctx context.Context, framing string) error {
 		return errf("empty MCP command")
 	}
 	cmd := exec.CommandContext(ctx, c.Command[0], c.Command[1:]...)
-	cmd.Env = os.Environ()
+	cmd.Env = mcpBaseEnv()
 	for key, value := range c.Env {
 		cmd.Env = append(cmd.Env, key+"="+value)
 	}
@@ -79,6 +79,7 @@ func (c *MCPClient) start(ctx context.Context, framing string) error {
 	c.stdin = stdin
 	c.reader = bufio.NewReader(stdout)
 	c.framing = framing
+	c.stderr = lockedLimitedBuffer{Limit: maxCommandStderrBytes}
 	go func() { _, _ = io.Copy(&c.stderr, stderr) }()
 	return nil
 }
@@ -150,6 +151,60 @@ func (c *MCPClient) Request(ctx context.Context, method string, params map[strin
 		result, _ := msg["result"].(map[string]any)
 		return result, nil
 	}
+}
+
+func mcpBaseEnv() []string {
+	allowed := []string{
+		"PATH", "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH",
+		"TMPDIR", "TEMP", "TMP",
+		"LANG", "LC_ALL", "LC_CTYPE",
+		"SystemRoot", "WINDIR", "COMSPEC", "PATHEXT",
+	}
+	env := make([]string, 0, len(allowed))
+	for _, key := range allowed {
+		if value, ok := os.LookupEnv(key); ok {
+			env = append(env, key+"="+value)
+		}
+	}
+	return env
+}
+
+type lockedLimitedBuffer struct {
+	Limit     int
+	buf       bytes.Buffer
+	Truncated bool
+	mu        sync.Mutex
+}
+
+func (b *lockedLimitedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.Limit <= 0 {
+		b.Truncated = true
+		return len(p), nil
+	}
+	remaining := b.Limit - b.buf.Len()
+	if remaining <= 0 {
+		b.Truncated = true
+		return len(p), nil
+	}
+	if len(p) > remaining {
+		_, _ = b.buf.Write(p[:remaining])
+		b.Truncated = true
+		return len(p), nil
+	}
+	_, _ = b.buf.Write(p)
+	return len(p), nil
+}
+
+func (b *lockedLimitedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	value := b.buf.String()
+	if b.Truncated {
+		value += "\n[stderr truncated]"
+	}
+	return value
 }
 
 func (c *MCPClient) Notify(method string, params map[string]any) error {

@@ -17,4 +17,43 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26.5"
-      - run: go test ./...
+      - name: Verify gofmt
+        if: runner.os != 'Windows'
+        run: test -z "$(find . -name '*.go' -print0 | xargs -0 gofmt -l)"
+      - name: Test
+        run: go test ./...
+      - name: Race test
+        run: go test -race ./internal/clyde
+      - name: Vet
+        run: go vet ./...
+      - name: Build
+        run: go build ./cmd/clyde
+      - name: CLI smoke
+        shell: bash
+        run: |
+          go run ./cmd/clyde --about
+          go run ./cmd/clyde help --json
+          go run ./cmd/clyde bundle verify /no/such/bundle >/tmp/clyde-smoke.out 2>/tmp/clyde-smoke.err && exit 1 || true
+      - name: Fuzz smoke
+        if: runner.os == 'Linux'
+        run: |
+          go test ./internal/clyde -run '^$' -fuzz=FuzzSplitTextPreservesUTF8 -fuzztime=5s
+          go test ./internal/clyde -run '^$' -fuzz=FuzzJSONRPCEnvelopeDecode -fuzztime=5s
+          go test ./internal/clyde -run '^$' -fuzz=FuzzGlobMatching -fuzztime=5s
+          go test ./internal/clyde -run '^$' -fuzz=FuzzSecretDetection -fuzztime=5s
+
+  analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+      - name: Staticcheck
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+          staticcheck ./...
+      - name: Govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...

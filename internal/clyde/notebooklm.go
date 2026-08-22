@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -27,6 +28,9 @@ type SyncOptions struct {
 	NotebookID            string
 	NotebookURL           string
 	Backend               string
+	BundleDigest          string
+	ReceiptPath           string
+	Resume                bool
 	MCPCommand            []string
 	NLMCommand            []string
 	DeleteExistingSources bool
@@ -49,13 +53,17 @@ func SyncChunks(ctx context.Context, chunks []ChunkRecord, opts SyncOptions) (in
 	if opts.Backend == "" {
 		opts.Backend = "mcp"
 	}
-	if opts.Backend == "nlm" {
-		return syncChunksNLM(ctx, chunks, opts)
+	receipt, err := prepareSyncReceipt(opts)
+	if err != nil {
+		return 0, err
 	}
-	return syncChunksMCP(ctx, chunks, opts)
+	if opts.Backend == "nlm" {
+		return syncChunksNLM(ctx, chunks, opts, receipt)
+	}
+	return syncChunksMCP(ctx, chunks, opts, receipt)
 }
 
-func syncChunksMCP(ctx context.Context, chunks []ChunkRecord, opts SyncOptions) (int, error) {
+func syncChunksMCP(ctx context.Context, chunks []ChunkRecord, opts SyncOptions, receipt *SyncReceipt) (int, error) {
 	command := opts.MCPCommand
 	if len(command) == 0 {
 		command = defaultMCPCommand
@@ -82,6 +90,11 @@ func syncChunksMCP(ctx context.Context, chunks []ChunkRecord, opts SyncOptions) 
 	count := 0
 	for _, chunk := range chunks {
 		title := opts.TitlePrefix + chunk.Path + " [" + itoa(int64(chunk.ChunkIndex)) + "/" + itoa(int64(chunk.ChunkTotal)) + "]"
+		if receipt != nil && opts.Resume && receipt.uploaded(chunk, title) {
+			count++
+			emit(sink, opts.JobID, "skipped", "already uploaded "+title, count, len(chunks), chunk.Path)
+			continue
+		}
 		emit(sink, opts.JobID, "uploading", "uploading "+title, count, len(chunks), chunk.Path)
 		args := map[string]any{"type": "text", "title": title, "content": chunk.Text}
 		if opts.NotebookID != "" {
@@ -90,18 +103,21 @@ func syncChunksMCP(ctx context.Context, chunks []ChunkRecord, opts SyncOptions) 
 		if opts.NotebookURL != "" {
 			args["notebook_url"] = opts.NotebookURL
 		}
-		if _, err := client.CallTool(ctx, "add_source", args); err != nil {
+		result, err := client.CallTool(ctx, "add_source", args)
+		if err != nil {
 			emitError(sink, opts.JobID, "failed", "failed uploading "+title, count, len(chunks), chunk.Path, err)
+			recordSyncReceiptChunk(opts, receipt, chunk, title, "", "failed", err)
 			return count, errf("failed uploading %s chunk %d/%d: %w", chunk.Path, chunk.ChunkIndex, chunk.ChunkTotal, err)
 		}
 		count++
+		recordSyncReceiptChunk(opts, receipt, chunk, title, sourceIDFromAny(result), "uploaded", nil)
 		emit(sink, opts.JobID, "uploaded", "uploaded "+title, count, len(chunks), chunk.Path)
 	}
 	emit(sink, opts.JobID, "complete", "uploaded "+itoa(int64(count))+" chunks", count, len(chunks), "")
 	return count, nil
 }
 
-func syncChunksNLM(ctx context.Context, chunks []ChunkRecord, opts SyncOptions) (int, error) {
+func syncChunksNLM(ctx context.Context, chunks []ChunkRecord, opts SyncOptions, receipt *SyncReceipt) (int, error) {
 	command := opts.NLMCommand
 	if len(command) == 0 {
 		command = []string{"nlm"}
@@ -117,27 +133,34 @@ func syncChunksNLM(ctx context.Context, chunks []ChunkRecord, opts SyncOptions) 
 		return 0, err
 	}
 	if opts.DeleteExistingSources {
-		if err := deleteExistingNLMSources(ctx, command, target, opts); err != nil {
+		if err := deleteExistingNLMSources(ctx, command, target, opts, receipt); err != nil {
 			return 0, err
 		}
 	}
 	count := 0
 	for _, chunk := range chunks {
 		title := opts.TitlePrefix + chunk.Path + " [" + itoa(int64(chunk.ChunkIndex)) + "/" + itoa(int64(chunk.ChunkTotal)) + "]"
+		if receipt != nil && opts.Resume && receipt.uploaded(chunk, title) {
+			count++
+			emit(sink, opts.JobID, "skipped", "already uploaded "+title, count, len(chunks), chunk.Path)
+			continue
+		}
 		emit(sink, opts.JobID, "uploading", "uploading "+title, count, len(chunks), chunk.Path)
-		_, err := runCommand(ctx, command, []string{"source", "add", target, "--text", chunk.Text, "--title", title, "--json"}, opts.RequestTimeout)
+		out, err := runCommand(ctx, command, []string{"source", "add", target, "--text", chunk.Text, "--title", title, "--json"}, opts.RequestTimeout)
 		if err != nil {
 			emitError(sink, opts.JobID, "failed", "failed uploading "+title, count, len(chunks), chunk.Path, err)
+			recordSyncReceiptChunk(opts, receipt, chunk, title, "", "failed", err)
 			return count, errf("failed uploading %s chunk %d/%d: %w", chunk.Path, chunk.ChunkIndex, chunk.ChunkTotal, err)
 		}
 		count++
+		recordSyncReceiptChunk(opts, receipt, chunk, title, sourceIDFromJSON(out), "uploaded", nil)
 		emit(sink, opts.JobID, "uploaded", "uploaded "+title, count, len(chunks), chunk.Path)
 	}
 	emit(sink, opts.JobID, "complete", "uploaded "+itoa(int64(count))+" chunks", count, len(chunks), "")
 	return count, nil
 }
 
-func deleteExistingNLMSources(ctx context.Context, command []string, target string, opts SyncOptions) error {
+func deleteExistingNLMSources(ctx context.Context, command []string, target string, opts SyncOptions, receipt *SyncReceipt) error {
 	emit(opts.Progress, opts.JobID, "pruning", "listing existing NotebookLM sources", 0, 0, "")
 	out, err := runCommand(ctx, command, []string{"source", "list", target, "--json"}, opts.RequestTimeout)
 	if err != nil {
@@ -147,6 +170,10 @@ func deleteExistingNLMSources(ctx context.Context, command []string, target stri
 	var sources []map[string]any
 	if err := json.Unmarshal(out, &sources); err != nil {
 		return errf("nlm source list did not return JSON: %w", err)
+	}
+	if receipt != nil {
+		receipt.recordDeletions(sources, "planned")
+		_ = saveSyncReceipt(opts.ReceiptPath, *receipt)
 	}
 	var ids []string
 	for _, source := range sources {
@@ -165,8 +192,77 @@ func deleteExistingNLMSources(ctx context.Context, command []string, target stri
 		emitError(opts.Progress, opts.JobID, "failed", "failed deleting existing NotebookLM sources", 0, 0, "", err)
 		return err
 	}
+	if receipt != nil {
+		receipt.recordDeletions(sources, "deleted")
+		_ = saveSyncReceipt(opts.ReceiptPath, *receipt)
+	}
 	emit(opts.Progress, opts.JobID, "pruned", "deleted "+itoa(int64(len(ids)))+" existing NotebookLM sources", len(ids), len(ids), "")
 	return nil
+}
+
+func prepareSyncReceipt(opts SyncOptions) (*SyncReceipt, error) {
+	if opts.ReceiptPath == "" {
+		return nil, nil
+	}
+	if opts.Backend == "" {
+		opts.Backend = "mcp"
+	}
+	if opts.Resume {
+		receipt, err := loadSyncReceipt(opts.ReceiptPath)
+		if err == nil {
+			if !receipt.canResume(opts) {
+				return nil, errf("sync receipt does not match requested transfer")
+			}
+			return &receipt, nil
+		}
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	receipt := newSyncReceipt(opts)
+	if err := saveSyncReceipt(opts.ReceiptPath, receipt); err != nil {
+		return nil, err
+	}
+	return &receipt, nil
+}
+
+func recordSyncReceiptChunk(opts SyncOptions, receipt *SyncReceipt, chunk ChunkRecord, title, sourceID, status string, err error) {
+	if receipt == nil || opts.ReceiptPath == "" {
+		return
+	}
+	receipt.recordChunk(chunk, title, sourceID, status, err)
+	_ = saveSyncReceipt(opts.ReceiptPath, *receipt)
+}
+
+func sourceIDFromJSON(data []byte) string {
+	var value any
+	if err := json.Unmarshal(data, &value); err != nil {
+		return ""
+	}
+	return sourceIDFromAny(value)
+}
+
+func sourceIDFromAny(value any) string {
+	switch v := value.(type) {
+	case map[string]any:
+		for _, key := range []string{"source_id", "sourceId", "id"} {
+			if id, ok := v[key].(string); ok && id != "" {
+				return id
+			}
+		}
+		for _, nested := range v {
+			if id := sourceIDFromAny(nested); id != "" {
+				return id
+			}
+		}
+	case []any:
+		for _, nested := range v {
+			if id := sourceIDFromAny(nested); id != "" {
+				return id
+			}
+		}
+	}
+	return ""
 }
 
 func toolAvailable(tools map[string]any, name string) bool {

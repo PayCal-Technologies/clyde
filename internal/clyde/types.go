@@ -28,9 +28,10 @@ func (r ScanResult) TotalBytes() int64 {
 }
 
 type ChunkRecord struct {
-	Path       string `json:"path"`
-	SHA256     string `json:"sha256"`
-	ChunkIndex int    `json:"chunk_index"`
-	ChunkTotal int    `json:"chunk_total"`
-	Text       string `json:"text"`
+	Path        string `json:"path"`
+	SHA256      string `json:"sha256"`
+	ChunkIndex  int    `json:"chunk_index"`
+	ChunkTotal  int    `json:"chunk_total"`
+	ChunkSHA256 string `json:"chunk_sha256,omitempty"`
+	Text        string `json:"text"`
 }

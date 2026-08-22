@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 )
+
+const maxStatusJobs = 1000
 
 type ProgressEvent struct {
 	JobID     string  `json:"job_id"`
@@ -96,8 +99,9 @@ type JobStatus struct {
 }
 
 type StatusStore struct {
-	mu   sync.Mutex
-	jobs map[string]*JobStatus
+	mu    sync.Mutex
+	jobs  map[string]*JobStatus
+	order []string
 }
 
 func NewStatusStore() *StatusStore {
@@ -112,8 +116,13 @@ func (s *StatusStore) Event(event ProgressEvent) JobStatus {
 	}
 	job := s.jobs[event.JobID]
 	if job == nil {
+		if len(s.jobs) >= maxStatusJobs && len(s.order) > 0 {
+			delete(s.jobs, s.order[0])
+			s.order = s.order[1:]
+		}
 		job = &JobStatus{JobID: event.JobID}
 		s.jobs[event.JobID] = job
+		s.order = append(s.order, event.JobID)
 	}
 	job.Phase = event.Phase
 	job.Message = event.Message
@@ -126,7 +135,7 @@ func (s *StatusStore) Event(event ProgressEvent) JobStatus {
 	if len(job.Events) > 500 {
 		job.Events = job.Events[len(job.Events)-500:]
 	}
-	return *job
+	return cloneJobStatus(*job)
 }
 
 func (s *StatusStore) Get(jobID string) map[string]any {
@@ -137,11 +146,11 @@ func (s *StatusStore) Get(jobID string) map[string]any {
 		if job == nil {
 			return map[string]any{"job": nil}
 		}
-		return map[string]any{"job": *job}
+		return map[string]any{"job": cloneJobStatus(*job)}
 	}
 	jobs := make([]JobStatus, 0, len(s.jobs))
 	for _, job := range s.jobs {
-		summary := *job
+		summary := cloneJobStatus(*job)
 		summary.Events = nil
 		jobs = append(jobs, summary)
 	}
@@ -154,11 +163,29 @@ func (s *StatusStore) Reset(jobID string) map[string]any {
 	if jobID != "" {
 		_, ok := s.jobs[jobID]
 		delete(s.jobs, jobID)
+		s.removeOrderLocked(jobID)
 		return map[string]any{"removed": ok}
 	}
 	count := len(s.jobs)
 	s.jobs = map[string]*JobStatus{}
+	s.order = nil
 	return map[string]any{"removed": count}
+}
+
+func (s *StatusStore) removeOrderLocked(jobID string) {
+	for i, id := range s.order {
+		if id == jobID {
+			s.order = append(s.order[:i], s.order[i+1:]...)
+			return
+		}
+	}
+}
+
+func cloneJobStatus(job JobStatus) JobStatus {
+	if len(job.Events) > 0 {
+		job.Events = append([]ProgressEvent(nil), job.Events...)
+	}
+	return job
 }
 
 func ServeStatus(host string, port int, out io.Writer) error {
@@ -178,8 +205,16 @@ func ServeStatus(host string, port int, out io.Writer) error {
 		}
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 	})
-	server := &http.Server{Addr: fmt.Sprintf("%s:%d", host, port), Handler: mux}
-	fmt.Fprintf(out, "clyde daemon listening on http://%s:%d/rpc\n", host, port)
+	addr := net.JoinHostPort(host, itoa(int64(port)))
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	fmt.Fprintf(out, "clyde daemon listening on http://%s/rpc\n", addr)
 	return server.ListenAndServe()
 }
 
@@ -227,7 +262,7 @@ func handleRPC(w http.ResponseWriter, r *http.Request, store *StatusStore) {
 }
 
 func StatusURL(host string, port int) string {
-	return fmt.Sprintf("http://%s:%d/rpc", host, port)
+	return "http://" + net.JoinHostPort(host, itoa(int64(port))) + "/rpc"
 }
 
 func FetchStatus(url, jobID string) (map[string]any, error) {

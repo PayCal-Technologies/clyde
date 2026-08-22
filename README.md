@@ -27,8 +27,9 @@ Official resources:
 It is intentionally conservative:
 
 - `preview` reports what would be included or skipped.
-- `bundle` writes local `manifest.json` and `chunks.jsonl` files for review.
-- `sync` uploads only after `--approve-upload`.
+- `bundle` writes private, digest-bound `manifest.json` and `chunks.jsonl` files for review.
+- `bundle verify` validates the reviewed bundle before upload approval.
+- `sync --bundle` uploads only after `--approve-upload` and `--approve-digest`.
 - Binary files, large files, common dependency/build directories, and likely
   secrets are skipped by default.
 - The default NotebookLM backend is the pinned `notebooklm-mcp@2.0.0` MCP server
@@ -65,24 +66,26 @@ Use this procedure for every Clyde release and performance pass:
 
 3. Implement only concrete, testable improvements. Record rejected suggestions
    when they do not fit Clyde's CLI execution model.
-4. Run `gofmt`, `go test ./...`, `go run ./cmd/clyde --about`, and
+4. Run `gofmt`, `go test ./...`, `go test -race ./internal/clyde`,
+   `go vet ./...`, `go run ./cmd/clyde --about`, and
    `go run ./cmd/clyde help --json`.
 5. Update `VERSION`, `productVersion`, `CHANGELOG.md`, and this README.
-6. Commit, push, create an annotated version tag, push the tag, and publish a
-   GitHub release with implementation notes and verification results.
+6. Commit, push, create an annotated version tag, and push the tag. The release
+   workflow builds Linux, macOS, and Windows archives, SHA-256 checksums, an
+   SPDX-compatible SBOM, and GitHub provenance attestations.
 7. Rebuild the local global install after the release when this workstation
    needs the new `clyde` binary.
 
 ## Install From Source
 
 ```bash
-go install github.com/PayCal-Technologies/clyde/cmd/clyde@main
+go install github.com/PayCal-Technologies/clyde/cmd/clyde@v0.2.5
 ```
 
 Windows from source in PowerShell:
 
 ```powershell
-go install github.com/PayCal-Technologies/clyde/cmd/clyde@main
+go install github.com/PayCal-Technologies/clyde/cmd/clyde@v0.2.5
 clyde --about
 ```
 
@@ -245,6 +248,21 @@ Create a local bundle:
 clyde bundle /path/to/repo --out .clyde/out
 ```
 
+Require a dedicated secret scanner before writing a bundle:
+
+```bash
+clyde bundle /path/to/repo \
+  --out .clyde/out \
+  --require-secret-scan \
+  --secret-scan-command "gitleaks detect --no-git --source {repo}"
+```
+
+Verify the reviewed bundle and copy the printed digest into the upload command:
+
+```bash
+clyde bundle verify .clyde/out
+```
+
 Plan a dated NotebookLM book name:
 
 ```bash
@@ -325,29 +343,49 @@ TUI command map:
 | `5` | Run the local agent against the current repo. |
 | `q` | Quit. |
 
-Sync through the MCP backend:
+Sync the reviewed bundle through the MCP backend:
 
 ```bash
-clyde sync /path/to/repo \
+clyde sync --bundle .clyde/out \
   --notebook-id "your-notebook-id" \
+  --approve-digest "sha256:..." \
   --approve-upload
 ```
 
-By default `sync` runs:
+`sync --bundle` verifies `manifest.json`, `chunks.jsonl`, per-chunk digests, and
+the overall bundle digest before upload. This is the auditable source-transfer
+path: the digest you approve is bound to the exact chunk content Clyde sends.
+Bundle sync writes `.clyde/out/sync-receipt.json` by default. The receipt records
+the bundle digest, destination, backend, chunk digests, returned source IDs where
+available, upload status, timestamps, and failure state.
+
+Resume a partially completed bundle sync:
+
+```bash
+clyde sync --bundle .clyde/out \
+  --notebook-id "your-notebook-id" \
+  --approve-digest "sha256:..." \
+  --approve-upload \
+  --resume
+```
+
+By default the MCP backend runs:
 
 ```bash
 npx -y notebooklm-mcp@2.0.0
 ```
 
 with `NOTEBOOKLM_TRANSPORT=stdio`, `NOTEBOOKLM_PROFILE=all`, and destructive
-NotebookLM tools disabled.
+NotebookLM tools disabled. Clyde passes a small allowlisted environment to this
+process instead of forwarding all parent credentials.
 
 For faster upload sessions, Clyde can also use the `nlm` CLI from
 `notebooklm-mcp-cli`:
 
 ```bash
-clyde sync /path/to/repo \
+clyde sync --bundle .clyde/out \
   --notebook-id "your-notebook-id" \
+  --approve-digest "sha256:..." \
   --approve-upload \
   --backend nlm
 ```
@@ -355,14 +393,28 @@ clyde sync /path/to/repo \
 To replace the target notebook's existing sources when using `nlm`:
 
 ```bash
-clyde sync /path/to/repo \
+clyde sync --bundle .clyde/out \
   --notebook-id "your-notebook-id" \
+  --approve-digest "sha256:..." \
   --approve-upload \
   --backend nlm \
   --delete-existing-sources
 ```
 
 That deletion is intentional and permanent for the target NotebookLM notebook.
+When `--delete-existing-sources` is used with a receipt, Clyde records the
+pre-delete source inventory before deletion and marks those entries deleted only
+after the delete command succeeds.
+
+A direct live-repository sync remains available for less-auditable local
+experiments:
+
+```bash
+clyde sync /path/to/repo \
+  --notebook-id "your-notebook-id" \
+  --approve-upload \
+  --receipt .clyde/live-sync-receipt.json
+```
 
 ## Status Daemon
 
@@ -370,8 +422,9 @@ Clyde includes a localhost-only JSON-RPC status daemon:
 
 ```bash
 clyde daemon
-clyde sync /path/to/repo \
+clyde sync --bundle .clyde/out \
   --notebook-id "your-notebook-id" \
+  --approve-digest "sha256:..." \
   --approve-upload \
   --status-url http://127.0.0.1:5876/rpc \
   --job-id clyde-sync
@@ -383,9 +436,10 @@ The daemon refuses non-localhost bind addresses.
 ## Security Notes
 
 Clyde is a transfer harness, not a security boundary. Review generated
-`manifest.json` before upload. Use a dedicated Google account and a private
-NotebookLM notebook. Do not upload secrets, production records, customer data,
-tokens, credentials, browser state, or private keys.
+`manifest.json`, run `clyde bundle verify`, and approve the printed digest before
+upload. Use a dedicated Google account and a private NotebookLM notebook. Do not
+upload secrets, production records, customer data, tokens, credentials, browser
+state, or private keys.
 
 Clyde also applies several guardrails before data leaves the local machine:
 

@@ -17,8 +17,12 @@ import (
 )
 
 const (
-	maxGitListBytes = 4 * 1024 * 1024
-	gitListTimeout  = 5 * time.Second
+	maxGitListBytes           = 4 * 1024 * 1024
+	gitListTimeout            = 5 * time.Second
+	maxScannedPaths           = 200000
+	maxIncludedFiles          = 20000
+	maxSkippedRecords         = 200000
+	maxTotalSourceBytes int64 = 512 * 1024 * 1024
 )
 
 var defaultExcludes = []string{
@@ -28,6 +32,8 @@ var defaultExcludes = []string{
 	"*.so", "*.dylib", "*.dll", "*.exe", "*.zip", "*.tar", "*.gz",
 	"*.7z", "*.dmg", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp",
 	"*.pdf", "*.sqlite", "*.db", "*.lock",
+	".env", ".env.*", "*.pem", "*.key", "*.p12", "*.pfx", "*.crt",
+	"credentials.json", "token.json", ".aws/**", ".config/gcloud/**",
 }
 
 var secretPatterns = []*regexp.Regexp{
@@ -54,53 +60,65 @@ func ScanRepo(repo string, include, exclude []string, maxFileBytes int64) (ScanR
 	excludes := make([]string, 0, len(defaultExcludes)+len(exclude))
 	excludes = append(excludes, defaultExcludes...)
 	excludes = append(excludes, exclude...)
-	for _, path := range candidates {
+	for i, path := range candidates {
+		if i >= maxScannedPaths {
+			appendSkip(&result, "...", "scan stopped after "+itoa(maxScannedPaths)+" paths")
+			break
+		}
 		rel, err := filepath.Rel(abs, path)
 		if err != nil {
 			continue
 		}
 		if rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-			result.Skips = append(result.Skips, SkipRecord{Path: filepath.ToSlash(rel), Reason: "outside repo"})
+			appendSkip(&result, filepath.ToSlash(rel), "outside repo")
 			continue
 		}
 		rel = filepath.ToSlash(rel)
 		if len(include) > 0 && !matchesAny(rel, include) {
-			result.Skips = append(result.Skips, SkipRecord{Path: rel, Reason: "not matched by include globs"})
+			appendSkip(&result, rel, "not matched by include globs")
 			continue
 		}
 		if matchesAny(rel, excludes) {
-			result.Skips = append(result.Skips, SkipRecord{Path: rel, Reason: "excluded by glob"})
+			appendSkip(&result, rel, "excluded by glob")
 			continue
 		}
 		stat, err := os.Lstat(path)
 		if err != nil {
-			result.Skips = append(result.Skips, SkipRecord{Path: rel, Reason: "stat failed: " + err.Error()})
+			appendSkip(&result, rel, "stat failed: "+err.Error())
 			continue
 		}
 		if stat.Mode()&os.ModeSymlink != 0 {
-			result.Skips = append(result.Skips, SkipRecord{Path: rel, Reason: "symbolic link"})
+			appendSkip(&result, rel, "symbolic link")
 			continue
 		}
 		if !stat.Mode().IsRegular() {
-			result.Skips = append(result.Skips, SkipRecord{Path: rel, Reason: "not a regular file"})
+			appendSkip(&result, rel, "not a regular file")
 			continue
 		}
 		if stat.Size() > maxFileBytes {
-			result.Skips = append(result.Skips, SkipRecord{Path: rel, Reason: "larger than " + itoa(maxFileBytes) + " bytes"})
+			appendSkip(&result, rel, "larger than "+itoa(maxFileBytes)+" bytes")
+			continue
+		}
+		if len(result.Files) >= maxIncludedFiles {
+			appendSkip(&result, rel, "included file limit reached")
+			continue
+		}
+		if result.TotalBytes()+stat.Size() > maxTotalSourceBytes {
+			appendSkip(&result, rel, "total source byte limit reached")
 			continue
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
-			result.Skips = append(result.Skips, SkipRecord{Path: rel, Reason: "read failed: " + err.Error()})
+			appendSkip(&result, rel, "read failed: "+err.Error())
 			continue
 		}
 		if looksBinary(data) {
-			result.Skips = append(result.Skips, SkipRecord{Path: rel, Reason: "binary file"})
+			appendSkip(&result, rel, "binary file")
 			continue
 		}
 		text := string(data)
 		if looksSecret(text) {
-			result.Skips = append(result.Skips, SkipRecord{Path: rel, Reason: "possible secret material"})
+			appendSkip(&result, rel, "possible secret material")
 			continue
 		}
 		sum := sha256.Sum256(data)
@@ -113,6 +131,13 @@ func ScanRepo(repo string, include, exclude []string, maxFileBytes int64) (ScanR
 		})
 	}
 	return result, nil
+}
+
+func appendSkip(result *ScanResult, path, reason string) {
+	if len(result.Skips) >= maxSkippedRecords {
+		return
+	}
+	result.Skips = append(result.Skips, SkipRecord{Path: path, Reason: reason})
 }
 
 func candidatePaths(repo string) []string {

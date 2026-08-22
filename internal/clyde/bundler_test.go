@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestMakeChunksPreservesHeaders(t *testing.T) {
@@ -83,6 +85,9 @@ func TestWriteBundleRecordsBookMetadata(t *testing.T) {
 	if decoded.Schema != "clyde.bundle.v1" {
 		t.Fatalf("unexpected schema: %s", decoded.Schema)
 	}
+	if decoded.BundleSHA256 == "" || !decoded.HeuristicOnly {
+		t.Fatalf("missing digest or heuristic marker: %#v", decoded)
+	}
 }
 
 func TestWriteBundleWritesChunkRecords(t *testing.T) {
@@ -128,6 +133,105 @@ func TestWriteBundleRejectsFileOutputPath(t *testing.T) {
 
 	if err == nil || !strings.Contains(err.Error(), "out dir must be a directory") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadBundleVerifiesDigest(t *testing.T) {
+	dir := t.TempDir()
+	outDir := filepath.Join(dir, "out")
+	manifest, err := WriteBundle(ScanResult{
+		Repo: dir,
+		Files: []FileRecord{{
+			Path:   filepath.Join(dir, "app.go"),
+			Rel:    "app.go",
+			Size:   13,
+			SHA256: "abc123",
+			Text:   "package main\n",
+		}},
+	}, outDir, 100, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bundle, err := LoadBundle(outDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bundle.Digest != manifest.BundleSHA256 || len(bundle.Chunks) != 1 {
+		t.Fatalf("unexpected bundle: %#v", bundle)
+	}
+
+	chunkPath := filepath.Join(outDir, "chunks.jsonl")
+	data, err := os.ReadFile(chunkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(chunkPath, append(data, []byte(`{"path":"extra"}`+"\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadBundle(outDir); err == nil || !strings.Contains(err.Error(), "chunk count mismatch") {
+		t.Fatalf("expected verification error, got %v", err)
+	}
+}
+
+func TestWriteBundleUsesPrivateModesAndRejectsOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	outDir := filepath.Join(dir, "out")
+	if _, err := WriteBundle(ScanResult{Repo: dir}, outDir, 100, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" {
+		for _, path := range []string{outDir, filepath.Join(outDir, "manifest.json"), filepath.Join(outDir, "chunks.jsonl")} {
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := os.FileMode(0o600)
+			if info.IsDir() {
+				want = 0o700
+			}
+			if info.Mode().Perm() != want {
+				t.Fatalf("%s mode=%#o want %#o", path, info.Mode().Perm(), want)
+			}
+		}
+	}
+	if _, err := WriteBundle(ScanResult{Repo: dir}, outDir, 100, "", ""); err == nil || !strings.Contains(err.Error(), "without --force") {
+		t.Fatalf("expected overwrite refusal, got %v", err)
+	}
+	if _, err := WriteBundleWithOptions(ScanResult{Repo: dir}, outDir, 100, "", "", WriteBundleOptions{Force: true}); err != nil {
+		t.Fatalf("force overwrite failed: %v", err)
+	}
+}
+
+func TestWriteBundleRejectsSymlinkTargets(t *testing.T) {
+	dir := t.TempDir()
+	outDir := filepath.Join(dir, "out")
+	if err := os.Mkdir(outDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, []byte("keep\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(outDir, "chunks.jsonl")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	_, err := WriteBundleWithOptions(ScanResult{Repo: dir}, outDir, 100, "", "", WriteBundleOptions{Force: true})
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("expected symlink refusal, got %v", err)
+	}
+}
+
+func TestSplitTextPreservesUTF8(t *testing.T) {
+	text := strings.Repeat("é", 20)
+	chunks := splitText(text, 5)
+	if strings.Join(chunks, "") != text {
+		t.Fatalf("split text did not preserve original UTF-8")
+	}
+	for _, chunk := range chunks {
+		if !utf8.ValidString(chunk) {
+			t.Fatalf("invalid UTF-8 chunk: %q", chunk)
+		}
 	}
 }
 
