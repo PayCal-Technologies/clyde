@@ -24,9 +24,9 @@
     <text x="34" y="486" fill="#eaf6ff">  &quot;message&quot;: &quot;chunking internal/clyde/notebooklm.go&quot;</text>
     <text x="34" y="520" fill="#9ab2c5">}</text>
     <text x="34" y="588" fill="#4bd680">Daemon</text>
-    <text x="121" y="588" fill="#eaf6ff">  localhost-only JSON-RPC status endpoint</text>
+    <text x="168" y="588" fill="#eaf6ff">localhost-only JSON-RPC status endpoint</text>
     <text x="34" y="622" fill="#57b3ff">Use</text>
-    <text x="77.5" y="622" fill="#eaf6ff">     automation dashboards, progress polling, and AI handoffs</text>
+    <text x="168" y="622" fill="#eaf6ff">automation dashboards, progress polling, and AI handoffs</text>
   </g>
   <rect x="0" y="0" width="1292" height="812" rx="28" fill="none" stroke="#9dcced" stroke-opacity="0.68"/>
 </svg>

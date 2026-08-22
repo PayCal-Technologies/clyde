@@ -16,12 +16,12 @@
     <text x="164.5" y="180" fill="#9ab2c5">  local repository assistant</text>
     <text x="34" y="214" fill="#9ab2c5">------------------------------------------------------------</text>
     <text x="34" y="248" fill="#4bd680">Model</text>
-    <text x="106.5" y="248" fill="#eaf6ff">       qwen2.5-coder:7b</text>
+    <text x="168" y="248" fill="#eaf6ff">qwen2.5-coder:7b</text>
     <text x="440" y="248" fill="#9ab2c5">  Ollama http://127.0.0.1:11434</text>
     <text x="34" y="282" fill="#4bd680">Repo</text>
-    <text x="92" y="282" fill="#eaf6ff">        /private/var/www/paycal-technologies/clyde</text>
+    <text x="168" y="282" fill="#eaf6ff">/private/var/www/paycal-technologies/clyde</text>
     <text x="34" y="316" fill="#4bd680">Scan</text>
-    <text x="92" y="316" fill="#eaf6ff">        36 files, 2 skips, 40 chunks, 187.9 KiB</text>
+    <text x="168" y="316" fill="#eaf6ff">36 files, 2 skips, 40 chunks, 187.9 KiB</text>
     <text x="34" y="384" fill="#57b3ff">Actions</text>
     <text x="34" y="418" fill="#eaf6ff">  [1] Ask model       [2] Preview repo      [3] Run agent</text>
     <text x="34" y="452" fill="#eaf6ff">  [4] Bundle source   [5] Sync review      [6] Status</text>

@@ -23,9 +23,9 @@
     <text x="34" y="486" fill="#eaf6ff">  &quot;redact_secrets&quot;: true</text>
     <text x="34" y="520" fill="#9ab2c5">}</text>
     <text x="34" y="588" fill="#57b3ff">Next</text>
-    <text x="92" y="588" fill="#eaf6ff">  clyde doctor .</text>
+    <text x="168" y="588" fill="#eaf6ff">clyde doctor .</text>
     <text x="34" y="622" fill="#9ab2c5">Tip</text>
-    <text x="77.5" y="622" fill="#eaf6ff">   use CLYDE_CONFIG to point at a project-specific config</text>
+    <text x="168" y="622" fill="#eaf6ff">use CLYDE_CONFIG to point at a project-specific config</text>
   </g>
   <rect x="0" y="0" width="1292" height="812" rx="28" fill="none" stroke="#9dcced" stroke-opacity="0.68"/>
 </svg>

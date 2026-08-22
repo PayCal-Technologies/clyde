@@ -21,7 +21,7 @@
     <text x="34" y="418" fill="#eaf6ff">3. Normalize include/exclude globs before chunking large repositories.</text>
     <text x="34" y="452" fill="#eaf6ff">4. Preserve JSON output contracts for AI callers and shell scripts.</text>
     <text x="34" y="520" fill="#4bd680">Done</text>
-    <text x="92" y="520" fill="#eaf6ff">    local-only model request; no NotebookLM upload performed</text>
+    <text x="168" y="520" fill="#eaf6ff">local-only model request; no NotebookLM upload performed</text>
   </g>
   <rect x="0" y="0" width="1292" height="812" rx="28" fill="none" stroke="#9dcced" stroke-opacity="0.68"/>
 </svg>
