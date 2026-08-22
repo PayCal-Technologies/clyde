@@ -70,6 +70,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	case "about":
 		printAbout(stdout)
 		return nil
+	case "help":
+		return cmdHelp(args[1:], stdin, stdout, stderr)
 	case "completion":
 		return cmdCompletion(args[1:], stdout)
 	case "tui":
@@ -114,9 +116,13 @@ func addScanFlags(fs *flag.FlagSet, flags *scanFlags) {
 }
 
 func cmdPreview(args []string, out io.Writer) error {
-	cfg, _, err := LoadConfig()
-	if err != nil {
-		return err
+	cfg := DefaultConfig()
+	if !isHelpArgs(args) {
+		loaded, _, err := LoadConfig()
+		if err != nil {
+			return err
+		}
+		cfg = loaded
 	}
 	flags := scanFlags{maxFileBytes: cfg.MaxFileBytes, maxChunkChars: cfg.MaxChunkChars}
 	fs := flag.NewFlagSet("preview", flag.ContinueOnError)
@@ -167,9 +173,13 @@ func cmdPreview(args []string, out io.Writer) error {
 }
 
 func cmdBundle(args []string, out io.Writer) error {
-	cfg, _, err := LoadConfig()
-	if err != nil {
-		return err
+	cfg := DefaultConfig()
+	if !isHelpArgs(args) {
+		loaded, _, err := LoadConfig()
+		if err != nil {
+			return err
+		}
+		cfg = loaded
 	}
 	flags := scanFlags{maxFileBytes: cfg.MaxFileBytes, maxChunkChars: cfg.MaxChunkChars}
 	fs := flag.NewFlagSet("bundle", flag.ContinueOnError)
@@ -225,9 +235,13 @@ func cmdBundle(args []string, out io.Writer) error {
 }
 
 func cmdSync(args []string, out, errOut io.Writer) error {
-	cfg, _, err := LoadConfig()
-	if err != nil {
-		return err
+	cfg := DefaultConfig()
+	if !isHelpArgs(args) {
+		loaded, _, err := LoadConfig()
+		if err != nil {
+			return err
+		}
+		cfg = loaded
 	}
 	flags := scanFlags{maxFileBytes: cfg.MaxFileBytes, maxChunkChars: cfg.MaxChunkChars}
 	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
@@ -402,6 +416,10 @@ func cmdStatus(args []string, out io.Writer) error {
 }
 
 func cmdBook(args []string, out io.Writer) error {
+	if isHelpArgs(args) {
+		printBookHelp(out)
+		return flag.ErrHelp
+	}
 	if len(args) == 0 {
 		return errf("book requires subject")
 	}
@@ -414,9 +432,13 @@ func cmdBook(args []string, out io.Writer) error {
 }
 
 func cmdModels(args []string, out io.Writer) error {
-	cfg, _, err := LoadConfig()
-	if err != nil {
-		return err
+	cfg := DefaultConfig()
+	if !isHelpArgs(args) {
+		loaded, _, err := LoadConfig()
+		if err != nil {
+			return err
+		}
+		cfg = loaded
 	}
 	fs := flag.NewFlagSet("models", flag.ContinueOnError)
 	fs.SetOutput(out)
@@ -465,9 +487,13 @@ func cmdModels(args []string, out io.Writer) error {
 }
 
 func cmdAsk(args []string, stdin io.Reader, out io.Writer) error {
-	cfg, _, err := LoadConfig()
-	if err != nil {
-		return err
+	cfg := DefaultConfig()
+	if !isHelpArgs(args) {
+		loaded, _, err := LoadConfig()
+		if err != nil {
+			return err
+		}
+		cfg = loaded
 	}
 	fs := flag.NewFlagSet("ask", flag.ContinueOnError)
 	fs.SetOutput(out)
@@ -524,9 +550,13 @@ func cmdAsk(args []string, stdin io.Reader, out io.Writer) error {
 }
 
 func cmdAgent(args []string, stdin io.Reader, out io.Writer) error {
-	cfg, _, err := LoadConfig()
-	if err != nil {
-		return err
+	cfg := DefaultConfig()
+	if !isHelpArgs(args) {
+		loaded, _, err := LoadConfig()
+		if err != nil {
+			return err
+		}
+		cfg = loaded
 	}
 	flags := scanFlags{maxFileBytes: cfg.MaxFileBytes, maxChunkChars: cfg.MaxChunkChars}
 	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
@@ -607,10 +637,13 @@ func cmdAgent(args []string, stdin io.Reader, out io.Writer) error {
 }
 
 func printHelp(out io.Writer) {
-	fmt.Fprintln(out, "usage: clyde {about,completion,tui,config,preview,bundle,sync,daemon,status,book,models,ask,agent} ...")
+	fmt.Fprintln(out, "usage: clyde {about,help,completion,tui,config,preview,bundle,sync,daemon,status,book,models,ask,agent} ...")
 	fmt.Fprintln(out, "run clyde with no arguments in a terminal to open the TUI")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "examples:")
+	fmt.Fprintln(out, "  clyde help agent")
+	fmt.Fprintln(out, "  clyde help --json")
+	fmt.Fprintln(out, "  clyde --about")
 	fmt.Fprintln(out, "  clyde preview . --include 'internal/**/*.go'")
 	fmt.Fprintln(out, "  clyde completion zsh > /opt/homebrew/share/zsh/site-functions/_clyde")
 	fmt.Fprintln(out, "  clyde models")
@@ -620,6 +653,162 @@ func printHelp(out io.Writer) {
 	fmt.Fprintln(out)
 	printLinks(out)
 	fmt.Fprintln(out, "run `clyde --about` for product details")
+}
+
+type commandInfo struct {
+	Name     string   `json:"name"`
+	Category string   `json:"category"`
+	Summary  string   `json:"summary"`
+	Access   string   `json:"access"`
+	Network  string   `json:"network"`
+	Syntax   string   `json:"syntax"`
+	Examples []string `json:"examples"`
+}
+
+var commandCatalog = []commandInfo{
+	{Name: "about", Category: "Core", Summary: "Show Clyde product details and official links.", Access: "Read-only", Network: "None", Syntax: "clyde --about\nclyde about", Examples: []string{"clyde --about", "clyde about"}},
+	{Name: "help", Category: "Core", Summary: "Show human-readable help or a JSON command catalog.", Access: "Read-only", Network: "None", Syntax: "clyde help [--json|COMMAND]", Examples: []string{"clyde help", "clyde help agent", "clyde help --json"}},
+	{Name: "completion", Category: "Packaging", Summary: "Generate shell completion for Bash, Zsh, or Fish.", Access: "Read-only", Network: "None", Syntax: "clyde completion {bash|zsh|fish}", Examples: []string{"clyde completion zsh > /opt/homebrew/share/zsh/site-functions/_clyde"}},
+	{Name: "tui", Category: "Interactive", Summary: "Open Clyde's dependency-free terminal UI.", Access: "Local interactive", Network: "Optional local Ollama", Syntax: "clyde tui", Examples: []string{"clyde", "clyde tui"}},
+	{Name: "config", Category: "Configuration", Summary: "Show, initialize, or print the Clyde configuration path.", Access: "Reads or writes local config", Network: "None", Syntax: "clyde config {show|init|path}", Examples: []string{"clyde config show", "clyde config init", "clyde config path"}},
+	{Name: "config init", Category: "Configuration", Summary: "Write Clyde's default configuration file.", Access: "Writes local config", Network: "None", Syntax: "clyde config init", Examples: []string{"clyde config init"}},
+	{Name: "config path", Category: "Configuration", Summary: "Print the config file path Clyde will use.", Access: "Read-only", Network: "None", Syntax: "clyde config path", Examples: []string{"clyde config path"}},
+	{Name: "config show", Category: "Configuration", Summary: "Print the effective Clyde configuration as JSON.", Access: "Read-only", Network: "None", Syntax: "clyde config show", Examples: []string{"clyde config show"}},
+	{Name: "preview", Category: "Repository Bundles", Summary: "Report included and skipped repository files before bundling or upload.", Access: "Read-only", Network: "None", Syntax: "clyde preview REPO [scan flags] [--json]", Examples: []string{"clyde preview .", "clyde preview . --include 'internal/**/*.go' --json"}},
+	{Name: "bundle", Category: "Repository Bundles", Summary: "Write a local manifest and source chunks for review.", Access: "Writes local files", Network: "None", Syntax: "clyde bundle REPO --out DIR [scan flags]", Examples: []string{"clyde bundle . --out .clyde/out"}},
+	{Name: "sync", Category: "NotebookLM Sync", Summary: "Upload scanned repository chunks to NotebookLM after explicit approval.", Access: "Uploads repository chunks", Network: "NotebookLM backend", Syntax: "clyde sync REPO --notebook-id ID --approve-upload", Examples: []string{"clyde sync . --notebook-id nb --approve-upload"}},
+	{Name: "daemon", Category: "Status", Summary: "Start the localhost-only JSON-RPC status daemon.", Access: "Starts local server", Network: "Localhost only", Syntax: "clyde daemon [--host HOST] [--port PORT]", Examples: []string{"clyde daemon"}},
+	{Name: "status", Category: "Status", Summary: "Read Clyde daemon progress for a job.", Access: "Read-only", Network: "Localhost by default", Syntax: "clyde status [--job-id ID] [--json] [--watch]", Examples: []string{"clyde status", "clyde status --job-id clyde-sync"}},
+	{Name: "book", Category: "NotebookLM Sync", Summary: "Generate a dated NotebookLM book title and slug.", Access: "Read-only", Network: "None", Syntax: "clyde book SUBJECT...", Examples: []string{"clyde book Clyde self feedback"}},
+	{Name: "models", Category: "Local Models", Summary: "List local Ollama models and the selected default.", Access: "Read-only", Network: "Local Ollama", Syntax: "clyde models [--json]", Examples: []string{"clyde models", "clyde models --json"}},
+	{Name: "ask", Category: "Local Models", Summary: "Send a direct prompt to the selected local Ollama model.", Access: "Sends prompt to Ollama", Network: "Configured Ollama", Syntax: "clyde ask [flags] PROMPT", Examples: []string{"clyde ask 'Review this function'", "cat prompt.md | clyde ask --stdin"}},
+	{Name: "agent", Category: "Local Models", Summary: "Scan repository context and ask a local model for feedback.", Access: "Reads repo and sends selected context", Network: "Local Ollama by default", Syntax: "clyde agent REPO [scan flags] [PROMPT]", Examples: []string{"clyde agent . 'Review this repo'", "clyde agent . --include 'internal/**/*.go' --prompt-file review.md"}},
+}
+
+func cmdHelp(args []string, stdin io.Reader, out, errOut io.Writer) error {
+	if len(args) == 0 {
+		printHelp(out)
+		return nil
+	}
+	if len(args) == 1 && args[0] == "--json" {
+		data, err := json.MarshalIndent(map[string]any{
+			"product":  productName,
+			"version":  productVersion,
+			"home":     productHomeURL,
+			"help":     productHelpURL,
+			"github":   productGitHubURL,
+			"commands": commandCatalog,
+		}, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	target := strings.Join(args, " ")
+	if info, ok := commandByName(target); ok && strings.Contains(target, " ") {
+		printCommandInfo(out, info)
+		return nil
+	}
+	if len(args) != 1 {
+		return errf("help accepts one command, or one command plus a subcommand")
+	}
+	switch target {
+	case "about":
+		printAbout(out)
+		return nil
+	case "help":
+		printHelpCommand(out)
+		return nil
+	case "completion":
+		printCompletionHelp(out)
+		return nil
+	case "config":
+		printConfigHelp(out)
+		return nil
+	case "tui":
+		printTUIHelp(out)
+		return nil
+	case "book":
+		printBookHelp(out)
+		return nil
+	}
+	return run([]string{target, "--help"}, stdin, out, errOut)
+}
+
+func printHelpCommand(out io.Writer) {
+	fmt.Fprintln(out, "usage: clyde help [--json|command]")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Show Clyde's top-level help, command-specific help, or a JSON command catalog.")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "examples:")
+	fmt.Fprintln(out, "  clyde help")
+	fmt.Fprintln(out, "  clyde help agent")
+	fmt.Fprintln(out, "  clyde help --json")
+}
+
+func printCompletionHelp(out io.Writer) {
+	fmt.Fprintln(out, "usage: clyde completion {bash|zsh|fish}")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Generate shell completion scripts for Clyde.")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "examples:")
+	fmt.Fprintln(out, "  clyde completion zsh > /opt/homebrew/share/zsh/site-functions/_clyde")
+	fmt.Fprintln(out, "  clyde completion bash > ~/.clyde-completion.bash")
+	fmt.Fprintln(out, "  clyde completion fish > ~/.config/fish/completions/clyde.fish")
+}
+
+func printConfigHelp(out io.Writer) {
+	fmt.Fprintln(out, "usage: clyde config {show|init|path}")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Manage Clyde's JSON configuration file.")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "examples:")
+	fmt.Fprintln(out, "  clyde config show")
+	fmt.Fprintln(out, "  clyde config init")
+	fmt.Fprintln(out, "  clyde config path")
+}
+
+func printTUIHelp(out io.Writer) {
+	fmt.Fprintln(out, "usage: clyde tui")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Open Clyde's dependency-free terminal UI.")
+	fmt.Fprintln(out, "Running `clyde` with no arguments in an interactive terminal also opens the TUI.")
+}
+
+func printBookHelp(out io.Writer) {
+	fmt.Fprintln(out, "usage: clyde book SUBJECT...")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Generate a dated NotebookLM book title and slug.")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "example:")
+	fmt.Fprintln(out, "  clyde book Clyde self feedback")
+}
+
+func commandByName(name string) (commandInfo, bool) {
+	for _, command := range commandCatalog {
+		if command.Name == name {
+			return command, true
+		}
+	}
+	return commandInfo{}, false
+}
+
+func printCommandInfo(out io.Writer, command commandInfo) {
+	fmt.Fprintf(out, "usage: %s\n", command.Syntax)
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, command.Summary)
+	fmt.Fprintln(out)
+	fmt.Fprintf(out, "category: %s\n", command.Category)
+	fmt.Fprintf(out, "access: %s\n", command.Access)
+	fmt.Fprintf(out, "network: %s\n", command.Network)
+	if len(command.Examples) > 0 {
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "examples:")
+		for _, example := range command.Examples {
+			fmt.Fprintf(out, "  %s\n", example)
+		}
+	}
 }
 
 func printAbout(out io.Writer) {
@@ -638,6 +827,10 @@ func printLinks(out io.Writer) {
 }
 
 func cmdCompletion(args []string, out io.Writer) error {
+	if isHelpArgs(args) {
+		printCompletionHelp(out)
+		return flag.ErrHelp
+	}
 	if len(args) != 1 {
 		return errf("completion requires shell: bash, zsh, or fish")
 	}
@@ -657,6 +850,10 @@ func cmdCompletion(args []string, out io.Writer) error {
 func cmdConfig(args []string, out io.Writer) error {
 	if len(args) == 0 {
 		args = []string{"show"}
+	}
+	if isHelpArgs(args) {
+		printConfigHelp(out)
+		return flag.ErrHelp
 	}
 	path, err := ConfigPath()
 	if err != nil {
@@ -815,6 +1012,15 @@ func validateCommandFlag(name, value string) error {
 	return nil
 }
 
+func isHelpArgs(args []string) bool {
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			return true
+		}
+	}
+	return false
+}
+
 type multiFlag []string
 
 func (m *multiFlag) String() string {
@@ -928,7 +1134,7 @@ _clyde_completion() {
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  commands="about completion tui config preview bundle sync daemon status book models ask agent"
+  commands="about help completion tui config preview bundle sync daemon status book models ask agent"
 
   if [[ ${COMP_CWORD} -eq 1 ]]; then
     COMPREPLY=( $(compgen -W "${commands}" -- "${cur}") )
@@ -938,6 +1144,9 @@ _clyde_completion() {
   case "${COMP_WORDS[1]}" in
     completion)
       COMPREPLY=( $(compgen -W "bash zsh fish" -- "${cur}") )
+      ;;
+    help)
+      COMPREPLY=( $(compgen -W "about help completion tui config preview bundle sync daemon status book models ask agent --json" -- "${cur}") )
       ;;
     config)
       COMPREPLY=( $(compgen -W "path show init" -- "${cur}") )
@@ -976,6 +1185,7 @@ _clyde() {
   local -a commands
   commands=(
     'about:show product details and links'
+    'help:show command help or JSON command catalog'
     'completion:print shell completion script'
     'tui:open the terminal UI'
     'config:manage Clyde config'
@@ -1001,6 +1211,7 @@ _clyde() {
     args)
       case $words[2] in
         completion) _values 'shell' bash zsh fish ;;
+        help) _values 'command' about help completion tui config preview bundle sync daemon status book models ask agent --json ;;
         config) _values 'config command' path show init ;;
         preview) _arguments '--include=[]' '--exclude=[]' '--max-file-bytes=[]' '--max-chunk-chars=[]' '--show-files=[]' '--show-skips=[]' '--json' '--help' ;;
         bundle) _arguments '--out=[]' '--subject=[]' '--book-title=[]' '--include=[]' '--exclude=[]' '--max-file-bytes=[]' '--max-chunk-chars=[]' '--help' ;;
@@ -1019,8 +1230,9 @@ _clyde "$@"
 
 const fishCompletionScript = `# fish completion for clyde
 complete -c clyde -f
-complete -c clyde -n "__fish_use_subcommand" -a "about completion tui config preview bundle sync daemon status book models ask agent"
+complete -c clyde -n "__fish_use_subcommand" -a "about help completion tui config preview bundle sync daemon status book models ask agent"
 complete -c clyde -n "__fish_seen_subcommand_from completion" -a "bash zsh fish"
+complete -c clyde -n "__fish_seen_subcommand_from help" -a "about help completion tui config preview bundle sync daemon status book models ask agent --json"
 complete -c clyde -n "__fish_seen_subcommand_from config" -a "path show init"
 complete -c clyde -n "__fish_seen_subcommand_from preview" -l include -r
 complete -c clyde -n "__fish_seen_subcommand_from preview" -l exclude -r

@@ -45,6 +45,9 @@ Initialize Clyde's config file:
 ```bash
 clyde config init
 clyde config show
+clyde help
+clyde help agent
+clyde help --json
 clyde --about
 ```
 
@@ -55,6 +58,16 @@ clyde completion zsh > /opt/homebrew/share/zsh/site-functions/_clyde
 clyde completion bash > ~/.clyde-completion.bash
 clyde completion fish > ~/.config/fish/completions/clyde.fish
 ```
+
+Help surfaces are designed for both humans and automation:
+
+- `clyde --help` prints concise human-readable top-level help.
+- `clyde help COMMAND` prints command-specific help without requiring a valid
+  local config file.
+- `clyde help --json` prints a structured command catalog with command names,
+  categories, summaries, access level, network behavior, syntax, and examples.
+- `clyde --about` and `clyde about` print product links for the official
+  homepage, help site, GitHub repository, and PayCal Technologies.
 
 By default Clyde reads `~/.config/clyde/config.json`. Set `CLYDE_CONFIG` to use
 a different file. CLI flags override environment variables, environment

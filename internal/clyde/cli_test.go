@@ -105,6 +105,95 @@ func TestSubcommandHelpExitsCleanly(t *testing.T) {
 	}
 }
 
+func TestHelpCommandPrintsTopLevelAndCommandHelp(t *testing.T) {
+	var out, errOut bytes.Buffer
+	status := Main([]string{"help"}, &out, &errOut)
+	if status != 0 {
+		t.Fatalf("status=%d stderr=%s", status, errOut.String())
+	}
+	if !strings.Contains(out.String(), "usage: clyde") || !strings.Contains(out.String(), "clyde help agent") {
+		t.Fatalf("unexpected help: %s", out.String())
+	}
+
+	out.Reset()
+	errOut.Reset()
+	status = Main([]string{"help", "agent"}, &out, &errOut)
+	if status != 0 {
+		t.Fatalf("status=%d stderr=%s", status, errOut.String())
+	}
+	if !strings.Contains(out.String(), "Usage of agent") || !strings.Contains(out.String(), "allow-remote-ollama") {
+		t.Fatalf("unexpected command help: %s", out.String())
+	}
+
+	out.Reset()
+	errOut.Reset()
+	status = Main([]string{"help", "config", "init"}, &out, &errOut)
+	if status != 0 {
+		t.Fatalf("status=%d stderr=%s", status, errOut.String())
+	}
+	if !strings.Contains(out.String(), "clyde config init") || !strings.Contains(out.String(), "Writes local config") {
+		t.Fatalf("unexpected subcommand help: %s", out.String())
+	}
+}
+
+func TestHelpJSONPrintsCommandCatalog(t *testing.T) {
+	var out, errOut bytes.Buffer
+	status := Main([]string{"help", "--json"}, &out, &errOut)
+	if status != 0 {
+		t.Fatalf("status=%d stderr=%s", status, errOut.String())
+	}
+	var payload struct {
+		Product  string        `json:"product"`
+		Commands []commandInfo `json:"commands"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Product != productName || len(payload.Commands) != 17 {
+		t.Fatalf("unexpected catalog: %#v", payload)
+	}
+	foundHelp := false
+	foundConfigInit := false
+	for _, command := range payload.Commands {
+		if command.Name == "help" && command.Syntax != "" && len(command.Examples) > 0 {
+			foundHelp = true
+		}
+		if command.Name == "config init" && command.Access == "Writes local config" {
+			foundConfigInit = true
+		}
+	}
+	if !foundHelp || !foundConfigInit {
+		t.Fatalf("expected commands missing from catalog: %#v", payload.Commands)
+	}
+}
+
+func TestHelpDoesNotRequireValidConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("CLYDE_CONFIG", path)
+	mustWrite(t, path, `{"ollama_url":"not-a-url"}`)
+
+	for _, args := range [][]string{
+		{"agent", "--help"},
+		{"ask", "--help"},
+		{"models", "--help"},
+		{"preview", "--help"},
+		{"bundle", "--help"},
+		{"sync", "--help"},
+		{"help", "agent"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			var out, errOut bytes.Buffer
+			status := Main(args, &out, &errOut)
+			if status != 0 {
+				t.Fatalf("status=%d out=%q stderr=%q", status, out.String(), errOut.String())
+			}
+			if !strings.Contains(out.String(), "Usage") && !strings.Contains(out.String(), "usage") {
+				t.Fatalf("unexpected help output: %s", out.String())
+			}
+		})
+	}
+}
+
 func TestTopLevelHelpIncludesProductLinks(t *testing.T) {
 	var out, errOut bytes.Buffer
 	status := Main([]string{"--help"}, &out, &errOut)
