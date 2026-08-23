@@ -341,9 +341,11 @@ GOOS=windows GOARCH=amd64 go build -o /tmp/clyde.exe ./cmd/clyde
 GOOS=windows GOARCH=amd64 go test -c ./internal/clyde -o /tmp/clyde-windows-test.exe
 ```
 
-The release workflow builds deterministic tar/zip archives, checks every archive
-for required files, runs the Linux amd64 binary smoke test, and verifies
-published release asset checksums after upload.
+The release workflow uses only local shell steps to satisfy the repository's
+local-only Actions policy. It builds deterministic tar/zip archives, creates a
+minimal SPDX JSON SBOM, checks every archive for required files, runs the Linux
+amd64 binary smoke test, and verifies published release asset checksums after
+upload.
 
 Windows cross-build checks are useful after MCP process lifecycle changes
 because the Windows implementation uses Job Objects behind build tags.

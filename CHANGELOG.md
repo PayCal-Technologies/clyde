@@ -58,7 +58,7 @@
   allowlisting, bounded MCP stderr, and status daemon hardening.
 - Expand CI to gofmt, tests, race tests, vet, builds, CLI smoke, fuzz smoke,
   staticcheck, and govulncheck; add tag-driven release archives, checksums,
-  SBOM, and provenance attestations.
+  SBOM, and release asset verification.
 - Split oversized internal domains for bundle, sync, MCP, status, receipt, and
   subprocess handling into smaller files while preserving the public CLI.
 - Centralize top-level command dispatch, command metadata, and completion shell

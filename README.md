@@ -72,8 +72,8 @@ Use this procedure for every Clyde release and performance pass:
 5. Update `VERSION`, `productVersion`, `CHANGELOG.md`, and this README.
 6. Commit, push, create an annotated version tag, and push the tag. The release
    workflow builds deterministic Linux, macOS, and Windows archives, verifies
-   archive contents, publishes SHA-256 checksums, an SPDX-compatible SBOM, and
-   GitHub provenance attestations, then verifies published asset checksums.
+   archive contents, publishes SHA-256 checksums and an SPDX-compatible SBOM,
+   then verifies published asset checksums.
 7. Rebuild the local global install after the release when this workstation
    needs the new `clyde` binary.
 
