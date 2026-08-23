@@ -34,6 +34,15 @@ func SyncChunks(ctx context.Context, chunks []ChunkRecord, opts SyncOptions) (in
 	if opts.Backend == "" {
 		opts.Backend = "mcp"
 	}
+	if opts.Backend == "mcp" && len(opts.MCPCommand) == 0 {
+		opts.MCPCommand = append([]string{}, defaultMCPCommand...)
+	}
+	if opts.Backend == "nlm" && len(opts.NLMCommand) == 0 {
+		opts.NLMCommand = []string{"nlm"}
+	}
+	if opts.DeleteExistingSources && opts.ReceiptPath == "" {
+		return 0, errf("--delete-existing-sources requires --receipt")
+	}
 	receipt, err := prepareSyncReceipt(opts)
 	if err != nil {
 		return 0, err

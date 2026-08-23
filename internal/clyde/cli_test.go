@@ -171,6 +171,9 @@ func TestBundleRecordsSecretScanCompletion(t *testing.T) {
 	if manifest.SecretScan == nil || !manifest.SecretScan.Completed {
 		t.Fatalf("missing secret scan record: %#v", manifest.SecretScan)
 	}
+	if manifest.SecretScan.TargetSHA256 == "" || manifest.SecretScan.OutputSHA256 == "" {
+		t.Fatalf("missing secret scan evidence digests: %#v", manifest.SecretScan)
+	}
 }
 
 func TestSyncDeleteExistingSourcesRequiresNLMBackend(t *testing.T) {

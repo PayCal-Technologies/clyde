@@ -102,7 +102,7 @@ func WriteDefaultConfig(path string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := preparePrivateDir(filepath.Dir(path)); err != nil {
 		return err
 	}
 	return writePrivateAtomic(path, append(data, '\n'))

@@ -14,9 +14,18 @@ type SkipRecord struct {
 }
 
 type ScanResult struct {
-	Repo  string
-	Files []FileRecord
-	Skips []SkipRecord
+	Repo      string
+	Discovery ScanDiscovery
+	Files     []FileRecord
+	Skips     []SkipRecord
+}
+
+type ScanDiscovery struct {
+	Method            string
+	GitExclusionsUsed bool
+	GitError          string
+	GitCommit         string
+	GitWorkingTree    string
 }
 
 func (r ScanResult) TotalBytes() int64 {

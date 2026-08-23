@@ -61,7 +61,11 @@ func ScanRepo(repo string, include, exclude []string, maxFileBytes int64) (ScanR
 	}
 
 	result := ScanResult{Repo: abs}
-	candidates := candidatePaths(abs)
+	candidates, discovery, err := candidatePaths(abs)
+	if err != nil {
+		return ScanResult{}, err
+	}
+	result.Discovery = discovery
 	excludes := make([]string, 0, len(defaultExcludes)+len(exclude))
 	excludes = append(excludes, defaultExcludes...)
 	excludes = append(excludes, exclude...)
@@ -153,17 +157,26 @@ func appendSkip(result *ScanResult, path, reason string) {
 	result.Skips = append(result.Skips, SkipRecord{Path: path, Reason: reason})
 }
 
-func candidatePaths(repo string) []string {
+func candidatePaths(repo string) ([]string, ScanDiscovery, error) {
 	if _, err := os.Stat(filepath.Join(repo, ".git")); err == nil {
-		if out, ok := gitListFiles(repo); ok {
-			paths := make([]string, 0, strings.Count(out, "\n"))
-			for _, line := range strings.Split(out, "\n") {
-				if line != "" {
-					paths = append(paths, filepath.Join(repo, filepath.FromSlash(line)))
-				}
-			}
-			return paths
+		out, gitErr := gitListFiles(repo)
+		discovery := ScanDiscovery{
+			Method:            "git",
+			GitExclusionsUsed: gitErr == nil,
+			GitCommit:         gitCurrentCommit(repo),
+			GitWorkingTree:    gitWorkingTreeState(repo),
 		}
+		if gitErr != nil {
+			discovery.GitError = gitErr.Error()
+			return nil, discovery, errf("git-aware file discovery failed; refusing filesystem fallback in Git repository: %w", gitErr)
+		}
+		paths := make([]string, 0, strings.Count(out, "\n"))
+		for _, line := range strings.Split(out, "\n") {
+			if line != "" {
+				paths = append(paths, filepath.Join(repo, filepath.FromSlash(line)))
+			}
+		}
+		return paths, discovery, nil
 	}
 	var paths []string
 	_ = filepath.WalkDir(repo, func(path string, d fs.DirEntry, err error) error {
@@ -178,34 +191,76 @@ func candidatePaths(repo string) []string {
 			return nil
 		}
 		paths = append(paths, path)
+		if len(paths) > maxScannedPaths {
+			return filepath.SkipAll
+		}
 		return nil
 	})
 	sort.Strings(paths)
-	return paths
+	return paths, ScanDiscovery{Method: "filesystem", GitExclusionsUsed: false}, nil
 }
 
-func gitListFiles(repo string) (string, bool) {
+func gitListFiles(repo string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitListTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", "-C", repo, "ls-files", "-co", "--exclude-standard")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return "", false
+		return "", err
 	}
 	if err := cmd.Start(); err != nil {
-		return "", false
+		return "", err
 	}
 	data, readErr := io.ReadAll(io.LimitReader(stdout, maxGitListBytes+1))
 	if len(data) > maxGitListBytes {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
-		return "", false
+		return "", errf("git ls-files output exceeded %d bytes", maxGitListBytes)
 	}
 	waitErr := cmd.Wait()
 	if ctx.Err() != nil || readErr != nil || waitErr != nil {
-		return "", false
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		if readErr != nil {
+			return "", readErr
+		}
+		return "", waitErr
 	}
-	return string(data), true
+	return string(data), nil
+}
+
+func gitCurrentCommit(repo string) string {
+	out, err := gitOutput(repo, "rev-parse", "HEAD")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
+
+func gitWorkingTreeState(repo string) string {
+	out, err := gitOutput(repo, "status", "--porcelain")
+	if err != nil {
+		return "unknown"
+	}
+	if strings.TrimSpace(out) == "" {
+		return "clean"
+	}
+	return "dirty"
+}
+
+func gitOutput(repo string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitListTimeout)
+	defer cancel()
+	cmdArgs := append([]string{"-C", repo}, args...)
+	out, err := exec.CommandContext(ctx, "git", cmdArgs...).Output()
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 func matchesAny(rel string, patterns []string) bool {

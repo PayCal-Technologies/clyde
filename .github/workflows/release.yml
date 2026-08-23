@@ -14,8 +14,8 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
         with:
           go-version: "1.26.5"
       - name: Verify version tag
@@ -31,6 +31,7 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           version="$(cat VERSION)"
+          source_date_epoch="$(git log -1 --format=%ct)"
           for goos in linux darwin windows; do
             for goarch in amd64 arm64; do
               name="clyde_${version}_${goos}_${goarch}"
@@ -42,36 +43,73 @@ jobs:
                 -ldflags "-s -w" \
                 -o "dist/${name}/${bin}" ./cmd/clyde
               cp README.md LICENSE VERSION "dist/${name}/"
+              find "dist/${name}" -exec touch -h -d "@${source_date_epoch}" {} +
               if [ "$goos" = "windows" ]; then
-                (cd dist && zip -qr "${name}.zip" "${name}")
+                (cd dist && TZ=UTC zip -X -qr "${name}.zip" "${name}")
               else
-                tar -C dist -czf "dist/${name}.tar.gz" "${name}"
+                tar \
+                  --sort=name \
+                  --mtime="@${source_date_epoch}" \
+                  --owner=0 \
+                  --group=0 \
+                  --numeric-owner \
+                  -C dist -czf "dist/${name}.tar.gz" "${name}"
               fi
               rm -rf "dist/${name}"
             done
           done
           (cd dist && sha256sum *.tar.gz *.zip > SHA256SUMS)
-      - name: Smoke test release archive
+      - name: Smoke test release archives
         shell: bash
         run: |
           set -euo pipefail
           version="$(cat VERSION)"
-          mkdir -p /tmp/clyde-release-smoke
-          tar -C /tmp/clyde-release-smoke -xzf "dist/clyde_${version}_linux_amd64.tar.gz"
-          /tmp/clyde-release-smoke/clyde_${version}_linux_amd64/clyde --about
+          (cd dist && sha256sum -c SHA256SUMS)
+          for archive in dist/*.tar.gz; do
+            name="$(basename "$archive" .tar.gz)"
+            rm -rf /tmp/clyde-release-smoke
+            mkdir -p /tmp/clyde-release-smoke
+            tar -C /tmp/clyde-release-smoke -xzf "$archive"
+            test -f "/tmp/clyde-release-smoke/${name}/README.md"
+            test -f "/tmp/clyde-release-smoke/${name}/LICENSE"
+            test -f "/tmp/clyde-release-smoke/${name}/VERSION"
+            test -x "/tmp/clyde-release-smoke/${name}/clyde"
+            if [[ "$name" == "clyde_${version}_linux_amd64" ]]; then
+              "/tmp/clyde-release-smoke/${name}/clyde" --about
+            fi
+          done
+          for archive in dist/*.zip; do
+            name="$(basename "$archive" .zip)"
+            rm -rf /tmp/clyde-release-smoke
+            mkdir -p /tmp/clyde-release-smoke
+            unzip -q "$archive" -d /tmp/clyde-release-smoke
+            test -f "/tmp/clyde-release-smoke/${name}/README.md"
+            test -f "/tmp/clyde-release-smoke/${name}/LICENSE"
+            test -f "/tmp/clyde-release-smoke/${name}/VERSION"
+            test -f "/tmp/clyde-release-smoke/${name}/clyde.exe"
+          done
       - name: Generate SPDX SBOM
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b
         with:
           path: .
           format: spdx-json
           output-file: dist/clyde.spdx.json
       - name: Attest artifacts
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
         with:
           subject-path: "dist/*"
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@6cbd405e2c4e67a21c47fa9e383d020e4e28b836
         with:
           files: |
             dist/*
           generate_release_notes: true
+      - name: Verify published release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/clyde-published-assets
+          gh release download "${GITHUB_REF_NAME}" --dir /tmp/clyde-published-assets
+          (cd /tmp/clyde-published-assets && sha256sum -c SHA256SUMS)

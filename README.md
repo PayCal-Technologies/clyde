@@ -9,7 +9,7 @@
 Clyde is a small Go MCP-client harness for moving auditable repository source bundles
 into Google NotebookLM.
 
-Current version: `0.2.6`
+Current version: `0.2.7`
 
 Official resources:
 
@@ -22,7 +22,7 @@ Official resources:
 - Contributing: [`CONTRIBUTING.md`](CONTRIBUTING.md)
 - Security reports: [`SECURITY.md`](SECURITY.md)
 
-![Clyde terminal showing doctor diagnostics and repository scan report output](help/assets/clyde-terminal.png)
+![Clyde terminal showing doctor diagnostics and repository scan report output](help/assets/clyde-terminal.svg)
 
 It is intentionally conservative:
 
@@ -71,21 +71,22 @@ Use this procedure for every Clyde release and performance pass:
    `go run ./cmd/clyde help --json`.
 5. Update `VERSION`, `productVersion`, `CHANGELOG.md`, and this README.
 6. Commit, push, create an annotated version tag, and push the tag. The release
-   workflow builds Linux, macOS, and Windows archives, SHA-256 checksums, an
-   SPDX-compatible SBOM, and GitHub provenance attestations.
+   workflow builds deterministic Linux, macOS, and Windows archives, verifies
+   archive contents, publishes SHA-256 checksums, an SPDX-compatible SBOM, and
+   GitHub provenance attestations, then verifies published asset checksums.
 7. Rebuild the local global install after the release when this workstation
    needs the new `clyde` binary.
 
 ## Install From Source
 
 ```bash
-go install github.com/PayCal-Technologies/clyde/cmd/clyde@v0.2.6
+go install github.com/PayCal-Technologies/clyde/cmd/clyde@v0.2.7
 ```
 
 Windows from source in PowerShell:
 
 ```powershell
-go install github.com/PayCal-Technologies/clyde/cmd/clyde@v0.2.6
+go install github.com/PayCal-Technologies/clyde/cmd/clyde@v0.2.7
 clyde --about
 ```
 
@@ -257,6 +258,11 @@ clyde bundle /path/to/repo \
   --secret-scan-command "gitleaks detect --no-git --source {repo}"
 ```
 
+`{repo}` and `{bundle}` expand to a private temporary snapshot of Clyde's
+captured source bytes, not the live working tree. The manifest records the
+scanner command plus target and output digests so the scan evidence is bound to
+the reviewed bundle.
+
 Verify the reviewed bundle and copy the printed digest into the upload command:
 
 ```bash
@@ -356,8 +362,10 @@ clyde sync --bundle .clyde/out \
 the overall bundle digest before upload. This is the auditable source-transfer
 path: the digest you approve is bound to the exact chunk content Clyde sends.
 Bundle sync writes `.clyde/out/sync-receipt.json` by default. The receipt records
-the bundle digest, destination, backend, chunk digests, returned source IDs where
-available, upload status, timestamps, and failure state.
+the bundle digest, destination, backend identity, chunk digests, returned source
+IDs where available, upload status, timestamps, and failure state. Clyde records
+each chunk as `pending` before upload and refuses automatic resume of pending or
+ambiguous chunks; reconcile the remote source before retrying with a new receipt.
 
 Resume a partially completed bundle sync:
 
@@ -398,13 +406,15 @@ clyde sync --bundle .clyde/out \
   --approve-digest "sha256:..." \
   --approve-upload \
   --backend nlm \
-  --delete-existing-sources
+  --delete-existing-sources \
+  --receipt .clyde/out/sync-receipt.json
 ```
 
 That deletion is intentional and permanent for the target NotebookLM notebook.
-When `--delete-existing-sources` is used with a receipt, Clyde records the
-pre-delete source inventory before deletion and marks those entries deleted only
-after the delete command succeeds.
+`--delete-existing-sources` requires a receipt. Clyde records the pre-delete
+source inventory before deletion and marks those entries deleted only after the
+delete command succeeds. If deletion is interrupted, resume uses only the
+originally planned source IDs and does not delete sources added later.
 
 A direct live-repository sync remains available for less-auditable local
 experiments:
@@ -444,13 +454,22 @@ state, or private keys.
 Clyde also applies several guardrails before data leaves the local machine:
 
 - `agent` refuses non-local Ollama URLs unless `--allow-remote-ollama` is set.
+- Git repositories fail closed if Git-aware discovery fails; Clyde does not
+  silently fall back to a raw filesystem walk that ignores `.gitignore`.
 - Repo scans skip symlinks, non-regular files, binary files, likely secrets,
   dependency/build folders, and files larger than `max_file_bytes`.
+- Clyde rejects symlinked parent directories for config, bundle, and receipt
+  writes, and rejects symlinks or non-regular files when reading bundles and
+  receipts.
+- Bundle manifests record discovery provenance and secret-scan evidence when
+  those checks run.
 - CLI duration, context, port, URL, and backend command flags are validated
   before network or process work starts.
 - Clyde-written config files use private file permissions, and Clyde rejects
   group- or world-writable config files.
 - MCP responses have a maximum frame size to avoid accidental large allocation.
+- MCP request/response operations are serialized, and MCP subprocess cleanup
+  terminates Unix process groups and Windows Job Objects when available.
 - Ollama error bodies are size-limited before being included in error messages.
 - Ollama JSON and streaming responses, Git file discovery, prompt input, and
   subprocess output capture are bounded.

@@ -4,7 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestSyncReceiptResumeMatching(t *testing.T) {
@@ -26,6 +29,22 @@ func TestSyncReceiptResumeMatching(t *testing.T) {
 	}
 }
 
+func TestSyncReceiptPendingChunkIsUnresolved(t *testing.T) {
+	receipt := newSyncReceipt(SyncOptions{NotebookID: "nb", Backend: "mcp"})
+	chunk := ChunkRecord{Path: "app.go", SHA256: "file", ChunkIndex: 1, ChunkTotal: 1, ChunkSHA256: "chunk"}
+	title := "app.go [1/1]"
+	receipt.recordChunk(chunk, title, "", "pending", nil)
+
+	status, ok := receipt.unresolved(chunk, title)
+
+	if !ok || status != "pending" {
+		t.Fatalf("expected unresolved pending chunk, got status=%q ok=%v", status, ok)
+	}
+	if receipt.uploaded(chunk, title) {
+		t.Fatal("pending chunk must not be treated as uploaded")
+	}
+}
+
 func TestSyncReceiptResumeBindsDeleteExistingSources(t *testing.T) {
 	opts := SyncOptions{NotebookID: "nb", Backend: "nlm", BundleDigest: "sha256:abc", DeleteExistingSources: true}
 	receipt := newSyncReceipt(opts)
@@ -38,11 +57,36 @@ func TestSyncReceiptResumeBindsDeleteExistingSources(t *testing.T) {
 	}
 }
 
+func TestSyncReceiptRecordsBackendIdentity(t *testing.T) {
+	opts := SyncOptions{NotebookID: "nb", Backend: "mcp", MCPCommand: defaultMCPCommand}
+	receipt := newSyncReceipt(opts)
+
+	if len(receipt.BackendIdentity.Command) != len(defaultMCPCommand) {
+		t.Fatalf("missing backend command identity: %#v", receipt.BackendIdentity)
+	}
+	if receipt.BackendIdentity.Package != "notebooklm-mcp@2.0.0" {
+		t.Fatalf("unexpected backend package: %#v", receipt.BackendIdentity)
+	}
+	if receipt.BackendIdentity.Runtime == "" {
+		t.Fatalf("missing runtime identity: %#v", receipt.BackendIdentity)
+	}
+}
+
+func TestSyncReceiptResumeBindsBackendCommandWhenRecorded(t *testing.T) {
+	opts := SyncOptions{NotebookID: "nb", Backend: "mcp", MCPCommand: []string{"npx", "-y", "notebooklm-mcp@2.0.0"}}
+	receipt := newSyncReceipt(opts)
+	opts.MCPCommand = []string{"npx", "-y", "notebooklm-mcp@2.1.0"}
+
+	if receipt.canResume(opts) {
+		t.Fatal("expected backend command mismatch")
+	}
+}
+
 func TestDeleteExistingNLMSourcesSkipsCompletedReceipt(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "receipt.json")
 	receipt := newSyncReceipt(SyncOptions{NotebookID: "nb", Backend: "nlm", DeleteExistingSources: true, ReceiptPath: path})
 	receipt.recordDeletionPhase("completed")
-	opts := SyncOptions{NotebookID: "nb", Backend: "nlm", DeleteExistingSources: true, ReceiptPath: path}
+	opts := SyncOptions{NotebookID: "nb", Backend: "nlm", DeleteExistingSources: true, ReceiptPath: path, RequestTimeout: 10 * time.Second}
 
 	if err := deleteExistingNLMSources(t.Context(), []string{"definitely-not-a-real-nlm-command"}, "nb", opts, &receipt); err != nil {
 		t.Fatal(err)
@@ -76,6 +120,79 @@ func TestPrepareSyncReceiptRefusesOverwriteWithoutResume(t *testing.T) {
 	}
 }
 
+func TestPrepareSyncReceiptResumeRequiresExistingReceipt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing.json")
+	opts := SyncOptions{NotebookID: "nb", Backend: "mcp", ReceiptPath: path, Resume: true}
+
+	_, err := prepareSyncReceipt(opts)
+
+	if err == nil || !strings.Contains(err.Error(), "--resume requires an existing sync receipt") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSyncChunksRequiresReceiptForDestructiveDelete(t *testing.T) {
+	_, err := SyncChunks(t.Context(), nil, SyncOptions{NotebookID: "nb", Backend: "nlm", DeleteExistingSources: true})
+
+	if err == nil || !strings.Contains(err.Error(), "--delete-existing-sources requires --receipt") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestDeleteExistingNLMSourcesUsesPlannedInventoryOnResume(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "nlm.log")
+	t.Setenv("CLYDE_NLM_HELPER", "1")
+	t.Setenv("CLYDE_NLM_HELPER_LOG", logPath)
+	path := filepath.Join(t.TempDir(), "receipt.json")
+	receipt := newSyncReceipt(SyncOptions{NotebookID: "nb", Backend: "nlm", DeleteExistingSources: true, ReceiptPath: path})
+	receipt.recordDeletionPhase("planned")
+	receipt.recordDeletions([]map[string]any{
+		{"id": "src-a", "title": "A"},
+		{"id": "src-b", "title": "B"},
+	}, "planned")
+	opts := SyncOptions{NotebookID: "nb", Backend: "nlm", DeleteExistingSources: true, ReceiptPath: path, RequestTimeout: 10 * time.Second}
+
+	if err := deleteExistingNLMSources(t.Context(), []string{os.Args[0], "-test.run=TestNLMHelperProcess", "--"}, "nb", opts, &receipt); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := strings.Fields(string(data))
+	if !slices.Contains(fields, "src-a") || !slices.Contains(fields, "src-b") {
+		t.Fatalf("expected planned IDs in delete command: %q", data)
+	}
+	if slices.Contains(fields, "src-c") || slices.Contains(fields, "list-called") {
+		t.Fatalf("unexpected fresh listing/delete target: %q", data)
+	}
+}
+
+func TestNLMHelperProcess(t *testing.T) {
+	if os.Getenv("CLYDE_NLM_HELPER") != "1" {
+		return
+	}
+	args := os.Args
+	for len(args) > 0 && args[0] != "--" {
+		args = args[1:]
+	}
+	if len(args) > 0 {
+		args = args[1:]
+	}
+	logPath := os.Getenv("CLYDE_NLM_HELPER_LOG")
+	if len(args) >= 2 && args[0] == "source" && args[1] == "list" {
+		_ = os.WriteFile(logPath, []byte("list-called src-c\n"), 0o600)
+		_, _ = os.Stdout.WriteString(`[{"id":"src-c","title":"new"}]`)
+		os.Exit(0)
+	}
+	if len(args) >= 2 && args[0] == "source" && args[1] == "delete" {
+		_ = os.WriteFile(logPath, []byte(strings.Join(args, " ")), 0o600)
+		_, _ = os.Stdout.WriteString(`{}`)
+		os.Exit(0)
+	}
+	os.Exit(2)
+}
+
 func TestSaveSyncReceiptUsesPrivateFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "receipt.json")
 	receipt := newSyncReceipt(SyncOptions{NotebookID: "nb", Backend: "mcp"})
@@ -97,6 +214,24 @@ func TestSaveSyncReceiptUsesPrivateFile(t *testing.T) {
 		if info.Mode().Perm() != 0o600 {
 			t.Fatalf("mode=%#o want 0600", info.Mode().Perm())
 		}
+	}
+}
+
+func TestSaveSyncReceiptRejectsSymlinkParentDirectory(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(t.TempDir(), "redirect")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, ".clyde")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	err := saveSyncReceipt(filepath.Join(link, "receipt.json"), newSyncReceipt(SyncOptions{NotebookID: "nb", Backend: "mcp"}))
+
+	if err == nil || !strings.Contains(err.Error(), "symlink path component") {
+		t.Fatalf("expected symlink parent refusal, got %v", err)
 	}
 }
 

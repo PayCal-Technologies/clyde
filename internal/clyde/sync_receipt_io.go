@@ -8,7 +8,7 @@ import (
 )
 
 func loadSyncReceipt(path string) (SyncReceipt, error) {
-	data, err := os.ReadFile(path)
+	data, err := readRegularFileLimited(path, maxSyncReceiptBytes)
 	if err != nil {
 		return SyncReceipt{}, err
 	}
@@ -28,7 +28,7 @@ func saveSyncReceipt(path string, receipt SyncReceipt) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := preparePrivateDir(filepath.Dir(path)); err != nil {
 		return err
 	}
 	return writePrivateAtomic(path, append(data, '\n'))
@@ -52,6 +52,7 @@ func prepareSyncReceipt(opts SyncOptions) (*SyncReceipt, error) {
 		if !os.IsNotExist(err) {
 			return nil, err
 		}
+		return nil, errf("--resume requires an existing sync receipt: %s", opts.ReceiptPath)
 	} else if _, err := os.Lstat(opts.ReceiptPath); err == nil {
 		return nil, errf("sync receipt already exists; use --resume or choose a new receipt path: %s", opts.ReceiptPath)
 	} else if !os.IsNotExist(err) {

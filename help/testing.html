@@ -19,7 +19,7 @@
     <h1>Clyde Testing Guide</h1>
     <p class="summary">How to test Clyde's repository scanning, bundling, CLI, config, Ollama, NotebookLM, protocol, and cross-platform behavior.</p>
     <figure class="terminal-showcase">
-      <img src="assets/clyde-terminal.png" alt="Clyde terminal showing doctor diagnostics and repository scan report output" width="1292" height="812" loading="eager">
+      <img src="assets/clyde-terminal.svg" alt="Clyde terminal showing doctor diagnostics and repository scan report output" width="1292" height="812" loading="eager">
       <figcaption>Clyde in action: local diagnostics and scan reports give humans and agents a compact repository readiness picture.</figcaption>
     </figure>
     <div class="links">
@@ -30,7 +30,8 @@
     </div>
     <div class="meta">
       <div><strong>Default suite</strong><code>go test ./...</code></div>
-      <div><strong>Test files</strong>13 Go test files</div>
+      <div><strong>Test files</strong>19 Go test files</div>
+      <div><strong>Coverage shape</strong>138 tests and 4 fuzz targets</div>
       <div><strong>CI platforms</strong>Linux, macOS, Windows</div>
     </div>
     <h2>Quick Start</h2>
@@ -38,20 +39,23 @@
 go test ./...</code></pre>
     <h2>Release Smoke</h2>
     <pre><code>go test ./...
+go test -race ./internal/clyde
+go vet ./...
 go run ./cmd/clyde --about
 go run ./cmd/clyde help --json
 go run ./cmd/clyde doctor --json
-go run ./cmd/clyde scan-report . --json</code></pre>
+go run ./cmd/clyde scan-report . --json
+GOOS=windows GOARCH=amd64 go build -o /tmp/clyde.exe ./cmd/clyde</code></pre>
     <h2>Suite Map</h2>
     <table>
       <thead><tr><th>Area</th><th>What It Protects</th></tr></thead>
       <tbody>
         <tr><td>Scanner</td><td>Secret skips, include/exclude matching, invalid paths, size limits, and symlink skipping.</td></tr>
-        <tr><td>Bundler</td><td>Chunk boundaries, manifest/chunks output, book metadata, skip records, and invalid output paths.</td></tr>
+        <tr><td>Bundler</td><td>Chunk boundaries, digest verification, manifest/chunks output, discovery provenance, secret-scan evidence, skip records, and invalid output paths.</td></tr>
         <tr><td>CLI</td><td>Preview, scan-report, bundle, sync guards, help, JSON catalog, doctor, about links, completions, numeric flags, and prompt limits.</td></tr>
-        <tr><td>Config</td><td>Config loading, env overrides, URL validation, string hardening, numeric limits, permissions, defaults, and config commands.</td></tr>
+        <tr><td>Config</td><td>Config loading, env overrides, URL validation, string hardening, numeric limits, permissions, defaults, symlink-parent refusal, and config commands.</td></tr>
         <tr><td>Ollama and agent</td><td>Model listing, generation, streaming, input hardening, remote URL guard, prompt ordering, and UTF-8-safe truncation.</td></tr>
-        <tr><td>NotebookLM, MCP, JSON-RPC</td><td>Redacted subprocess errors, bounded buffers, MCP frames, JSON-RPC failures, and request body limits.</td></tr>
+        <tr><td>NotebookLM, MCP, JSON-RPC</td><td>Receipts, destructive deletion resume safety, backend identity, redacted subprocess errors, bounded buffers, MCP single-flight requests, MCP frames, JSON-RPC failures, and request body limits.</td></tr>
       </tbody>
     </table>
     <h2>Focused Commands</h2>
@@ -59,7 +63,8 @@ go run ./cmd/clyde scan-report . --json</code></pre>
 go test ./internal/clyde -run 'TestMakeChunks|TestWriteBundle|TestSplitText'
 go test ./internal/clyde -run 'Test.*Help|Test.*Doctor|Test.*Completion|TestPreview|TestScanReport|TestBundle'
 go test ./internal/clyde -run 'TestLoadConfig|TestConfigCommand'
-go test ./internal/clyde -run 'TestOllama|TestCLIAsk|TestCLIModels|TestAgentRejectsRemote'</code></pre>
+go test ./internal/clyde -run 'TestOllama|TestCLIAsk|TestCLIModels|TestAgentRejectsRemote'
+go test ./internal/clyde -run 'TestMCP|TestSyncReceipt|TestDeleteExisting'</code></pre>
     <h2>Cross-Platform Build</h2>
     <pre><code>for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
   os="${target%/*}"

@@ -33,7 +33,16 @@ func syncChunksNLM(ctx context.Context, chunks []ChunkRecord, opts SyncOptions, 
 			emit(sink, opts.JobID, "skipped", "already uploaded "+title, count, len(chunks), chunk.Path)
 			continue
 		}
+		if receipt != nil && opts.Resume {
+			if status, ok := receipt.unresolved(chunk, title); ok {
+				return count, errf("sync receipt has %s chunk with ambiguous remote state; reconcile or start a new receipt before retrying: %s", status, title)
+			}
+		}
 		emit(sink, opts.JobID, "uploading", "uploading "+title, count, len(chunks), chunk.Path)
+		if err := recordSyncReceiptChunk(opts, receipt, chunk, title, "", "pending", nil); err != nil {
+			emitError(sink, opts.JobID, "failed", "failed recording pending receipt for "+title, count, len(chunks), chunk.Path, err)
+			return count, err
+		}
 		out, err := runCommand(ctx, command, []string{"source", "add", target, "--text", chunk.Text, "--title", title, "--json"}, opts.RequestTimeout)
 		if err != nil {
 			emitError(sink, opts.JobID, "failed", "failed uploading "+title, count, len(chunks), chunk.Path, err)
@@ -58,21 +67,25 @@ func deleteExistingNLMSources(ctx context.Context, command []string, target stri
 		emit(opts.Progress, opts.JobID, "pruned", "existing NotebookLM sources already deleted for this receipt", 0, 0, "")
 		return nil
 	}
-	emit(opts.Progress, opts.JobID, "pruning", "listing existing NotebookLM sources", 0, 0, "")
-	out, err := runCommand(ctx, command, []string{"source", "list", target, "--json"}, opts.RequestTimeout)
-	if err != nil {
-		emitError(opts.Progress, opts.JobID, "failed", "failed deleting existing NotebookLM sources", 0, 0, "", err)
-		return err
-	}
 	var sources []map[string]any
-	if err := json.Unmarshal(out, &sources); err != nil {
-		return errf("nlm source list did not return JSON: %w", err)
-	}
-	if receipt != nil {
-		receipt.recordDeletionPhase("planned")
-		receipt.recordDeletions(sources, "planned")
-		if err := saveSyncReceipt(opts.ReceiptPath, *receipt); err != nil {
+	if receipt != nil && receipt.deletionPlanned() {
+		sources = receipt.plannedDeletionSources()
+	} else {
+		emit(opts.Progress, opts.JobID, "pruning", "listing existing NotebookLM sources", 0, 0, "")
+		out, err := runCommand(ctx, command, []string{"source", "list", target, "--json"}, opts.RequestTimeout)
+		if err != nil {
+			emitError(opts.Progress, opts.JobID, "failed", "failed deleting existing NotebookLM sources", 0, 0, "", err)
 			return err
+		}
+		if err := json.Unmarshal(out, &sources); err != nil {
+			return errf("nlm source list did not return JSON: %w", err)
+		}
+		if receipt != nil {
+			receipt.recordDeletionPhase("planned")
+			receipt.recordDeletions(sources, "planned")
+			if err := saveSyncReceipt(opts.ReceiptPath, *receipt); err != nil {
+				return err
+			}
 		}
 	}
 	var ids []string

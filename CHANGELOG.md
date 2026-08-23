@@ -4,6 +4,46 @@
 
 - Nothing yet.
 
+## v0.2.7 - 2026-08-23
+
+- Fail closed when Git-aware repository discovery fails instead of falling back
+  to raw filesystem traversal inside Git repositories.
+- Record repository discovery provenance in bundle manifests, including the
+  discovery method, whether Git exclusions were honored, Git commit, and
+  working-tree state.
+- Require `--resume` receipts to already exist so mistyped receipt paths cannot
+  silently start a fresh transfer.
+- Persist chunk receipt entries as `pending` before remote upload and refuse
+  automatic resume of pending or ambiguous chunks.
+- Require sync receipts for `--delete-existing-sources` and resume destructive
+  deletion from the originally planned source ID inventory only.
+- Reject symlinked parent directories for bundle and receipt writes, and reject
+  symlinks or non-regular files when reading bundles and receipts.
+- Reject symlinked parent directories during config initialization.
+- Run external secret scanners against a private snapshot of Clyde's captured
+  source bytes and record target/output evidence digests.
+- Record backend command, resolved executable path, executable digest when
+  readable, package, and runtime identity in sync receipts.
+- Pin CI/release actions and analysis tool versions, make release archive
+  metadata reproducible, smoke-check every archive, and verify published asset
+  checksums after release upload.
+- Use Windows Job Objects for MCP subprocess cleanup when available, with
+  direct child termination as a fallback.
+- Stream `chunks.jsonl` decoding and digest verification during bundle loading
+  to avoid retaining a second raw copy of the chunk file in memory.
+- Verify reconstructed bundle file digests incrementally without constructing
+  duplicate whole-file strings, and avoid copying chunk text into verification
+  index maps.
+- Serialize MCP request/response operations so the client remains safe if
+  future callers issue concurrent requests.
+- Pre-count per-file chunk totals before materializing chunk records so the
+  generated chunk limit is enforced before building large intermediate chunk
+  slices.
+- Add regression tests for fail-closed Git discovery, destructive deletion
+  resume safety, receipt resume semantics, symlink path refusal, config
+  initialization path safety, secret-scan
+  evidence, backend identity, and bundle discovery metadata.
+
 ## v0.2.6 - 2026-08-23
 
 - Bind reviewed bundles to uploaded content with per-chunk digests, an overall

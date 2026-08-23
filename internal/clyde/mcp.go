@@ -21,6 +21,7 @@ type MCPClient struct {
 	framing string
 	stderr  lockedLimitedBuffer
 	mu      sync.Mutex
+	opMu    sync.Mutex
 }
 
 const maxMCPFrameBytes = 16 * 1024 * 1024

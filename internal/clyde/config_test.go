@@ -221,6 +221,26 @@ func TestConfigInitRefusesExistingSymlink(t *testing.T) {
 	}
 }
 
+func TestConfigInitRejectsSymlinkParentDirectory(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(t.TempDir(), "redirect")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "config-dir")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	t.Setenv("CLYDE_CONFIG", filepath.Join(link, "config.json"))
+
+	var out, errOut bytes.Buffer
+	status := Main([]string{"config", "init"}, &out, &errOut)
+
+	if status != 1 || !strings.Contains(errOut.String(), "symlink path component") {
+		t.Fatalf("expected symlink parent refusal, status=%d stderr=%s", status, errOut.String())
+	}
+}
+
 func TestConfigInitRefusesDanglingSymlink(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")

@@ -53,7 +53,16 @@ func syncChunksMCP(ctx context.Context, chunks []ChunkRecord, opts SyncOptions, 
 			emit(sink, opts.JobID, "skipped", "already uploaded "+title, count, len(chunks), chunk.Path)
 			continue
 		}
+		if receipt != nil && opts.Resume {
+			if status, ok := receipt.unresolved(chunk, title); ok {
+				return count, errf("sync receipt has %s chunk with ambiguous remote state; reconcile or start a new receipt before retrying: %s", status, title)
+			}
+		}
 		emit(sink, opts.JobID, "uploading", "uploading "+title, count, len(chunks), chunk.Path)
+		if err := recordSyncReceiptChunk(opts, receipt, chunk, title, "", "pending", nil); err != nil {
+			emitError(sink, opts.JobID, "failed", "failed recording pending receipt for "+title, count, len(chunks), chunk.Path, err)
+			return count, err
+		}
 		args := map[string]any{"type": "text", "title": title, "content": chunk.Text}
 		if opts.NotebookID != "" {
 			args["notebook_id"] = opts.NotebookID

@@ -2,11 +2,15 @@ package clyde
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestMCPReadMessageAcceptsLowercaseContentLength(t *testing.T) {
@@ -79,6 +83,35 @@ func TestMCPBaseEnvDoesNotForwardCredentials(t *testing.T) {
 	}
 }
 
+func TestMCPRequestsAreSingleFlight(t *testing.T) {
+	body1 := `{"jsonrpc":"2.0","id":1,"result":{"ok":"one"}}`
+	body2 := `{"jsonrpc":"2.0","id":2,"result":{"ok":"two"}}`
+	client := &MCPClient{
+		stdin:   &lockedWriteCloser{},
+		reader:  bufio.NewReader(strings.NewReader(body1 + "\n" + body2 + "\n")),
+		framing: "newline",
+		nextID:  1,
+		Timeout: time.Second,
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := client.Request(context.Background(), "test", map[string]any{})
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestLockedLimitedBufferBoundsStderr(t *testing.T) {
 	var buf lockedLimitedBuffer
 	buf.Limit = 4
@@ -90,3 +123,20 @@ func TestLockedLimitedBufferBoundsStderr(t *testing.T) {
 		t.Fatalf("unexpected buffer: %q", got)
 	}
 }
+
+type lockedWriteCloser struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (w *lockedWriteCloser) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.Write(p)
+}
+
+func (w *lockedWriteCloser) Close() error {
+	return nil
+}
+
+var _ io.WriteCloser = (*lockedWriteCloser)(nil)

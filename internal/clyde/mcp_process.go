@@ -34,6 +34,11 @@ func (c *MCPClient) start(ctx context.Context, framing string) error {
 	if err := cmd.Start(); err != nil {
 		return errf("failed to start MCP command %q: %w", strings.Join(c.Command, " "), err)
 	}
+	if err := trackMCPProcess(cmd); err != nil {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+		return err
+	}
 	c.cmd = cmd
 	c.stdin = stdin
 	c.reader = bufio.NewReader(stdout)

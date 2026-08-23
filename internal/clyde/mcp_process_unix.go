@@ -11,6 +11,10 @@ func configureMCPCommand(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }
 
+func trackMCPProcess(cmd *exec.Cmd) error {
+	return nil
+}
+
 func killMCPProcess(cmd *exec.Cmd) error {
 	if cmd.Process == nil {
 		return nil

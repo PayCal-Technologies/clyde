@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 )
 
@@ -18,16 +17,10 @@ const (
 )
 
 func VerifyBundle(bundle Bundle, chunksData []byte) error {
+	if err := verifyBundleHeader(bundle); err != nil {
+		return err
+	}
 	manifest := bundle.Manifest
-	if manifest.Schema != "clyde.bundle.v1" {
-		return errf("unsupported bundle schema: %s", manifest.Schema)
-	}
-	if manifest.FileCount != len(manifest.Files) {
-		return errf("bundle manifest file count mismatch: manifest=%d files=%d", manifest.FileCount, len(manifest.Files))
-	}
-	if manifest.ChunkCount != len(bundle.Chunks) {
-		return errf("bundle manifest chunk count mismatch: manifest=%d chunks=%d", manifest.ChunkCount, len(bundle.Chunks))
-	}
 	if chunksData == nil {
 		var err error
 		chunksData, err = encodeChunks(bundle.Chunks)
@@ -47,6 +40,20 @@ func VerifyBundle(bundle Bundle, chunksData []byte) error {
 	}
 	if err := verifyBundleStructure(manifest, bundle.Chunks); err != nil {
 		return err
+	}
+	return nil
+}
+
+func verifyBundleHeader(bundle Bundle) error {
+	manifest := bundle.Manifest
+	if manifest.Schema != "clyde.bundle.v1" {
+		return errf("unsupported bundle schema: %s", manifest.Schema)
+	}
+	if manifest.FileCount != len(manifest.Files) {
+		return errf("bundle manifest file count mismatch: manifest=%d files=%d", manifest.FileCount, len(manifest.Files))
+	}
+	if manifest.ChunkCount != len(bundle.Chunks) {
+		return errf("bundle manifest chunk count mismatch: manifest=%d chunks=%d", manifest.ChunkCount, len(bundle.Chunks))
 	}
 	return nil
 }
@@ -75,8 +82,9 @@ func verifyBundleStructure(manifest Manifest, chunks []ChunkRecord) error {
 	if totalBytes != manifest.TotalBytes {
 		return errf("bundle manifest total bytes mismatch: manifest=%d files=%d", manifest.TotalBytes, totalBytes)
 	}
-	fileChunks := make(map[string]map[int]ChunkRecord)
-	for _, chunk := range chunks {
+	fileChunks := make(map[string]map[int]*ChunkRecord)
+	for i := range chunks {
+		chunk := &chunks[i]
 		if chunk.Path == "" || chunk.ChunkIndex <= 0 || chunk.ChunkTotal <= 0 {
 			return errf("invalid chunk metadata for %q", chunk.Path)
 		}
@@ -103,7 +111,7 @@ func verifyBundleStructure(manifest Manifest, chunks []ChunkRecord) error {
 			return errf("bundle chunk index exceeds total for %s: %d/%d", chunk.Path, chunk.ChunkIndex, chunk.ChunkTotal)
 		}
 		if fileChunks[chunk.Path] == nil {
-			fileChunks[chunk.Path] = make(map[int]ChunkRecord)
+			fileChunks[chunk.Path] = make(map[int]*ChunkRecord)
 		}
 		if _, exists := fileChunks[chunk.Path][chunk.ChunkIndex]; exists {
 			return errf("bundle contains duplicate chunk index for %s: %d", chunk.Path, chunk.ChunkIndex)
@@ -115,7 +123,8 @@ func verifyBundleStructure(manifest Manifest, chunks []ChunkRecord) error {
 		if file.ChunkCount != len(chunksByIndex) {
 			return errf("bundle chunk count mismatch for %s: manifest=%d chunks=%d", file.Path, file.ChunkCount, len(chunksByIndex))
 		}
-		var reconstructed strings.Builder
+		reconstructedSHA := sha256.New()
+		reconstructedSize := int64(0)
 		for i := 1; i <= file.ChunkCount; i++ {
 			chunk, ok := chunksByIndex[i]
 			if !ok {
@@ -125,12 +134,16 @@ func verifyBundleStructure(manifest Manifest, chunks []ChunkRecord) error {
 			if err != nil {
 				return err
 			}
-			reconstructed.WriteString(body)
+			reconstructedSize += int64(len(body))
+			if reconstructedSize > file.Size {
+				return errf("bundle reconstructed size mismatch for %s: manifest=%d reconstructed=%d", file.Path, file.Size, reconstructedSize)
+			}
+			reconstructedSHA.Write([]byte(body))
 		}
-		if int64(len(reconstructed.String())) != file.Size {
-			return errf("bundle reconstructed size mismatch for %s: manifest=%d reconstructed=%d", file.Path, file.Size, len(reconstructed.String()))
+		if reconstructedSize != file.Size {
+			return errf("bundle reconstructed size mismatch for %s: manifest=%d reconstructed=%d", file.Path, file.Size, reconstructedSize)
 		}
-		if sha256HexString(reconstructed.String()) != file.SHA256 {
+		if hex.EncodeToString(reconstructedSHA.Sum(nil)) != file.SHA256 {
 			return errf("bundle reconstructed digest mismatch for %s", file.Path)
 		}
 	}
@@ -180,19 +193,7 @@ func decodeChunks(data []byte) ([]ChunkRecord, error) {
 }
 
 func readFileLimited(path string, maxBytes int64) ([]byte, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) > maxBytes {
-		return nil, errf("file is too large; maximum is %d bytes", maxBytes)
-	}
-	return data, nil
+	return readRegularFileLimited(path, maxBytes)
 }
 
 func bundleDigestAndManifest(manifest Manifest, chunksData []byte) (string, []byte, error) {

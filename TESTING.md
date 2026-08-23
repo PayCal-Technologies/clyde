@@ -46,9 +46,9 @@ Current test inventory:
 
 | Area | Count |
 | --- | ---: |
-| Go test files | 13 |
-| `func Test...` tests | 76 |
-| `func Fuzz...` targets | 0 |
+| Go test files | 19 |
+| `func Test...` tests | 138 |
+| `func Fuzz...` targets | 4 |
 
 All tests currently live under `internal/clyde`.
 
@@ -61,10 +61,15 @@ All tests currently live under `internal/clyde`.
 | `config_test.go` | Config loading, environment overrides, URL validation, string hardening, numeric limits, file permission checks, defaults, config commands. |
 | `jsonrpc_test.go` | JSON-RPC HTTP failure handling and request body size limits. |
 | `mcp_test.go` | MCP framing, lowercase content-length support, oversized frame rejection. |
+| `notebooklm_mcp_test.go` | MCP sync source ID capture and receipt persistence failures. |
 | `notebooklm_test.go` | Subprocess payload redaction, timeout summaries, limited buffer truncation. |
 | `ollama_test.go` | Ollama model listing, generation, streaming, malformed streams, metadata sanitization, hardened inputs, CLI ask/agent/model behavior, remote URL guard. |
+| `path_strings_test.go` | Suspicious Unicode, NUL, absolute, parent, and Windows-style path string rejection. |
 | `scanner_test.go` | Repository scanning, secret skips, include/exclude behavior, invalid paths, invalid size limits, symlink skipping. |
+| `scan_report_test.go` | Scan report sorting, counts, and top-file behavior. |
+| `sync_receipt_test.go` | Receipt matching, resume safety, destructive deletion inventories, and private receipt writes. |
 | `status_test.go` | Status store formatting and recorded events. |
+| `catalog_test.go` | Command catalog alignment with command registration and help output. |
 | `tui_test.go` | TUI model index behavior. |
 | `util_test.go` | Safe numeric conversion boundaries. |
 
@@ -72,10 +77,13 @@ All tests currently live under `internal/clyde`.
 
 The GitHub Actions workflow is `.github/workflows/test.yml`.
 
-It runs:
+The main matrix runs:
 
 ```bash
 go test ./...
+go test -race ./internal/clyde
+go vet ./...
+go build ./cmd/clyde
 ```
 
 on:
@@ -84,9 +92,10 @@ on:
 - `macos-latest`
 - `windows-latest`
 
-This proves the normal Go test suite runs on Linux, macOS, and Windows. It does
-not prove external tools such as Git, Ollama, Node/npm, NotebookLM MCP, or `nlm`
-are available in every environment.
+Linux also runs fuzz smoke tests for chunk splitting, JSON-RPC envelope parsing,
+glob matching, and secret detection. A separate analysis job runs pinned
+Staticcheck and govulncheck versions. These checks do not prove external tools such as Ollama,
+Node/npm, NotebookLM MCP, or `nlm` are available in every environment.
 
 ## Test Commands By Purpose
 
@@ -96,6 +105,7 @@ are available in every environment.
 | Run tests without cache | `go test -count=1 ./...` |
 | Run one test | `go test ./internal/clyde -run TestName` |
 | Run tests with race detector | `go test -race ./...` |
+| Run fuzz smoke targets | `go test ./internal/clyde -run '^$' -fuzz=FuzzSplitTextPreservesUTF8 -fuzztime=5s` |
 | Check formatting | `gofmt -l $(find . -name '*.go')` |
 | Apply formatting | `gofmt -w $(find . -name '*.go')` |
 | Build Clyde | `go build -o bin/clyde ./cmd/clyde` |
@@ -308,6 +318,8 @@ Before publishing a Clyde release, run:
 git status --short
 gofmt -w $(find . -name '*.go')
 go test ./...
+go test -race ./internal/clyde
+go vet ./...
 go run ./cmd/clyde --about
 go run ./cmd/clyde help --json
 go run ./cmd/clyde doctor --json
@@ -328,6 +340,13 @@ Recommended cross-build release smoke:
 GOOS=windows GOARCH=amd64 go build -o /tmp/clyde.exe ./cmd/clyde
 GOOS=windows GOARCH=amd64 go test -c ./internal/clyde -o /tmp/clyde-windows-test.exe
 ```
+
+The release workflow builds deterministic tar/zip archives, checks every archive
+for required files, runs the Linux amd64 binary smoke test, and verifies
+published release asset checksums after upload.
+
+Windows cross-build checks are useful after MCP process lifecycle changes
+because the Windows implementation uses Job Objects behind build tags.
 
 If the release changes AI, NotebookLM, Ollama, or config behavior, include a
 short note in the release body explaining which focused tests covered that area.
@@ -400,6 +419,7 @@ Recommended for release or broad feature work:
 
 ```bash
 go test -race ./...
+go vet ./...
 go run ./cmd/clyde --about
 go run ./cmd/clyde help --json
 go run ./cmd/clyde doctor --json

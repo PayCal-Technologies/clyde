@@ -105,6 +105,21 @@ func TestScanRepoRejectsInvalidGlob(t *testing.T) {
 	}
 }
 
+func TestScanRepoFailsClosedWhenGitDiscoveryFails(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(dir, "ignored-secret.txt"), "private\n")
+	t.Setenv("PATH", "")
+
+	_, err := ScanRepo(dir, nil, nil, 250000)
+
+	if err == nil || !strings.Contains(err.Error(), "git-aware file discovery failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestScanRepoRejectsFilePath(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "file.go")

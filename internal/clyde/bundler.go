@@ -1,8 +1,11 @@
 package clyde
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,32 +30,44 @@ type manifestBook struct {
 }
 
 type Manifest struct {
-	Schema        string         `json:"schema"`
-	ClydeVersion  string         `json:"clyde_version"`
-	CreatedAt     string         `json:"created_at"`
-	Repo          string         `json:"repo"`
-	RepoName      string         `json:"repo_name"`
-	HeuristicOnly bool           `json:"heuristic_only"`
-	FileCount     int            `json:"file_count"`
-	ChunkCount    int            `json:"chunk_count"`
-	TotalBytes    int64          `json:"total_bytes"`
-	Book          *manifestBook  `json:"book"`
-	SecretScan    *manifestScan  `json:"secret_scan,omitempty"`
-	Files         []manifestFile `json:"files"`
-	Skips         []manifestSkip `json:"skips"`
-	BundleSHA256  string         `json:"bundle_sha256,omitempty"`
+	Schema        string            `json:"schema"`
+	ClydeVersion  string            `json:"clyde_version"`
+	CreatedAt     string            `json:"created_at"`
+	Repo          string            `json:"repo"`
+	RepoName      string            `json:"repo_name"`
+	Discovery     manifestDiscovery `json:"discovery"`
+	HeuristicOnly bool              `json:"heuristic_only"`
+	FileCount     int               `json:"file_count"`
+	ChunkCount    int               `json:"chunk_count"`
+	TotalBytes    int64             `json:"total_bytes"`
+	Book          *manifestBook     `json:"book"`
+	SecretScan    *manifestScan     `json:"secret_scan,omitempty"`
+	Files         []manifestFile    `json:"files"`
+	Skips         []manifestSkip    `json:"skips"`
+	BundleSHA256  string            `json:"bundle_sha256,omitempty"`
+}
+
+type manifestDiscovery struct {
+	Method            string `json:"method"`
+	GitExclusionsUsed bool   `json:"git_exclusions_used"`
+	GitError          string `json:"git_error,omitempty"`
+	GitCommit         string `json:"git_commit,omitempty"`
+	GitWorkingTree    string `json:"git_working_tree,omitempty"`
 }
 
 type manifestScan struct {
-	Required  bool   `json:"required"`
-	Command   string `json:"command,omitempty"`
-	Completed bool   `json:"completed"`
+	Required     bool   `json:"required"`
+	Command      string `json:"command,omitempty"`
+	TargetSHA256 string `json:"target_sha256,omitempty"`
+	OutputSHA256 string `json:"output_sha256,omitempty"`
+	Completed    bool   `json:"completed"`
 }
 
 type WriteBundleOptions struct {
 	Force             bool
 	RequireSecretScan bool
 	SecretScanCommand string
+	SecretScanResult  *manifestScan
 }
 
 type Bundle struct {
@@ -69,22 +84,26 @@ func WriteBundleWithOptions(result ScanResult, outDir string, maxChunkChars int,
 	if info, err := os.Lstat(outDir); err == nil && !info.IsDir() {
 		return Manifest{}, errf("out dir must be a directory, not a file: %s", outDir)
 	}
-	if err := os.MkdirAll(outDir, 0o700); err != nil {
+	if err := preparePrivateDir(outDir); err != nil {
 		return Manifest{}, fmt.Errorf("create bundle output directory %s: %w", outDir, err)
-	}
-	if err := os.Chmod(outDir, 0o700); err != nil {
-		return Manifest{}, fmt.Errorf("secure bundle output directory %s: %w", outDir, err)
 	}
 	chunks, err := MakeChunksWithLimit(result, maxChunkChars, bookTitle, maxGeneratedChunks)
 	if err != nil {
 		return Manifest{}, err
 	}
 	manifest := Manifest{
-		Schema:        "clyde.bundle.v1",
-		ClydeVersion:  productVersion,
-		CreatedAt:     time.Now().UTC().Format(time.RFC3339Nano),
-		Repo:          result.Repo,
-		RepoName:      filepath.Base(result.Repo),
+		Schema:       "clyde.bundle.v1",
+		ClydeVersion: productVersion,
+		CreatedAt:    time.Now().UTC().Format(time.RFC3339Nano),
+		Repo:         result.Repo,
+		RepoName:     filepath.Base(result.Repo),
+		Discovery: manifestDiscovery{
+			Method:            result.Discovery.Method,
+			GitExclusionsUsed: result.Discovery.GitExclusionsUsed,
+			GitError:          result.Discovery.GitError,
+			GitCommit:         result.Discovery.GitCommit,
+			GitWorkingTree:    result.Discovery.GitWorkingTree,
+		},
 		HeuristicOnly: true,
 		FileCount:     len(result.Files),
 		ChunkCount:    len(chunks),
@@ -96,10 +115,19 @@ func WriteBundleWithOptions(result ScanResult, outDir string, maxChunkChars int,
 		manifest.Book = &manifestBook{Title: bookTitle, Slug: bookSlug}
 	}
 	if opts.RequireSecretScan || strings.TrimSpace(opts.SecretScanCommand) != "" {
-		manifest.SecretScan = &manifestScan{
-			Required:  opts.RequireSecretScan,
-			Command:   strings.TrimSpace(opts.SecretScanCommand),
-			Completed: true,
+		if opts.SecretScanResult != nil {
+			scan := *opts.SecretScanResult
+			scan.Required = opts.RequireSecretScan
+			if scan.Command == "" {
+				scan.Command = strings.TrimSpace(opts.SecretScanCommand)
+			}
+			manifest.SecretScan = &scan
+		} else {
+			manifest.SecretScan = &manifestScan{
+				Required:  opts.RequireSecretScan,
+				Command:   strings.TrimSpace(opts.SecretScanCommand),
+				Completed: true,
+			}
 		}
 	}
 	chunksByFile := make(map[string]int)
@@ -150,21 +178,66 @@ func LoadBundle(dir string) (Bundle, error) {
 	if err != nil {
 		return Bundle{}, fmt.Errorf("read bundle manifest %s: %w", manifestPath, err)
 	}
-	chunksData, err := readFileLimited(chunksPath, maxBundleChunksBytes)
-	if err != nil {
-		return Bundle{}, fmt.Errorf("read bundle chunks %s: %w", chunksPath, err)
-	}
 	var manifest Manifest
 	if err := json.Unmarshal(manifestData, &manifest); err != nil {
 		return Bundle{}, fmt.Errorf("decode bundle manifest %s: %w", manifestPath, err)
 	}
-	chunks, err := decodeChunks(chunksData)
+	chunkHash := sha256.New()
+	manifestForDigest := manifest
+	manifestForDigest.BundleSHA256 = ""
+	digestManifestData, err := json.MarshalIndent(manifestForDigest, "", "  ")
+	if err != nil {
+		return Bundle{}, fmt.Errorf("encode bundle manifest for digest: %w", err)
+	}
+	chunkHash.Write(digestManifestData)
+	chunks, err := decodeChunksFile(chunksPath, maxBundleChunksBytes, chunkHash)
 	if err != nil {
 		return Bundle{}, fmt.Errorf("decode bundle chunks %s: %w", chunksPath, err)
 	}
 	bundle := Bundle{Manifest: manifest, Chunks: chunks, Digest: manifest.BundleSHA256}
-	if err := VerifyBundle(bundle, chunksData); err != nil {
+	if err := verifyBundleHeader(bundle); err != nil {
+		return Bundle{}, err
+	}
+	if manifest.BundleSHA256 == "" {
+		return Bundle{}, errf("bundle manifest is missing bundle_sha256")
+	}
+	actualDigest := "sha256:" + hex.EncodeToString(chunkHash.Sum(nil))
+	if actualDigest != manifest.BundleSHA256 {
+		return Bundle{}, errf("bundle digest mismatch: manifest=%s actual=%s", manifest.BundleSHA256, actualDigest)
+	}
+	if err := verifyBundleStructure(manifest, chunks); err != nil {
 		return Bundle{}, err
 	}
 	return bundle, nil
+}
+
+func decodeChunksFile(path string, maxBytes int64, digest io.Writer) ([]ChunkRecord, error) {
+	file, expected, err := openRegularFileLimited(path, maxBytes)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	decoder := json.NewDecoder(io.TeeReader(file, digest))
+	var chunks []ChunkRecord
+	for {
+		if len(chunks) >= maxGeneratedChunks {
+			return nil, errf("bundle chunk limit exceeded; maximum is %d", maxGeneratedChunks)
+		}
+		var chunk ChunkRecord
+		if err := decoder.Decode(&chunk); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, err
+		}
+		chunks = append(chunks, chunk)
+	}
+	final, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !os.SameFile(expected, final) || final.Size() != expected.Size() {
+		return nil, errf("file changed during read: %s", path)
+	}
+	return chunks, nil
 }

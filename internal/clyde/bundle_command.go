@@ -2,6 +2,8 @@ package clyde
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
@@ -65,10 +67,13 @@ func cmdBundle(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	var secretScan *manifestScan
 	if strings.TrimSpace(*secretScanCommand) != "" {
-		if err := runSecretScanCommand(context.Background(), *secretScanCommand, result.Repo); err != nil {
+		scan, err := runSecretScanCommand(context.Background(), *secretScanCommand, result)
+		if err != nil {
 			return err
 		}
+		secretScan = &scan
 	}
 	title, slug := "", ""
 	if plan != nil {
@@ -78,6 +83,7 @@ func cmdBundle(args []string, out io.Writer) error {
 		Force:             *force,
 		RequireSecretScan: *requireSecretScan,
 		SecretScanCommand: *secretScanCommand,
+		SecretScanResult:  secretScan,
 	})
 	if err != nil {
 		return err
@@ -115,16 +121,69 @@ func cmdBundleVerify(args []string, out io.Writer) error {
 	return nil
 }
 
-func runSecretScanCommand(ctx context.Context, commandLine, repo string) error {
+func runSecretScanCommand(ctx context.Context, commandLine string, result ScanResult) (manifestScan, error) {
 	command := shellFields(commandLine)
 	if len(command) == 0 {
-		return errf("secret scan command must not be empty")
+		return manifestScan{}, errf("secret scan command must not be empty")
 	}
+	snapshotDir, targetDigest, err := writeSecretScanSnapshot(result)
+	if err != nil {
+		return manifestScan{}, err
+	}
+	defer os.RemoveAll(snapshotDir)
 	for i, arg := range command {
-		command[i] = strings.ReplaceAll(arg, "{repo}", repo)
+		arg = strings.ReplaceAll(arg, "{repo}", snapshotDir)
+		arg = strings.ReplaceAll(arg, "{bundle}", snapshotDir)
+		command[i] = arg
 	}
-	if _, err := runCommand(ctx, command, nil, 10*time.Minute); err != nil {
-		return errf("secret scan command failed: %w", err)
+	out, err := runCommand(ctx, command, nil, 10*time.Minute)
+	if err != nil {
+		return manifestScan{}, errf("secret scan command failed: %w", err)
 	}
-	return nil
+	return manifestScan{
+		Command:      strings.TrimSpace(commandLine),
+		TargetSHA256: targetDigest,
+		OutputSHA256: "sha256:" + sha256HexBytes(out),
+		Completed:    true,
+	}, nil
+}
+
+func writeSecretScanSnapshot(result ScanResult) (string, string, error) {
+	dir, err := os.MkdirTemp("", "clyde-secret-scan-*")
+	if err != nil {
+		return "", "", err
+	}
+	ok := false
+	defer func() {
+		if !ok {
+			_ = os.RemoveAll(dir)
+		}
+	}()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return "", "", err
+	}
+	hash := sha256.New()
+	for _, file := range result.Files {
+		if err := validateRepoRelPath(file.Rel); err != nil {
+			return "", "", err
+		}
+		path := filepath.Join(dir, filepath.FromSlash(file.Rel))
+		if err := preparePrivateDir(filepath.Dir(path)); err != nil {
+			return "", "", err
+		}
+		data := []byte(file.Text)
+		fmt.Fprintf(hash, "%s\x00%d\x00%s\x00", file.Rel, len(data), file.SHA256)
+		hash.Write(data)
+		hash.Write([]byte{0})
+		if err := writePrivateAtomic(path, data); err != nil {
+			return "", "", err
+		}
+	}
+	ok = true
+	return dir, "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func sha256HexBytes(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }

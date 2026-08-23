@@ -15,6 +15,9 @@ func (c *MCPClient) CallTool(ctx context.Context, name string, arguments map[str
 }
 
 func (c *MCPClient) Request(ctx context.Context, method string, params map[string]any) (map[string]any, error) {
+	c.opMu.Lock()
+	defer c.opMu.Unlock()
+
 	c.mu.Lock()
 	id := c.nextID
 	if id == int(^uint(0)>>1) {
@@ -55,5 +58,8 @@ func (c *MCPClient) Request(ctx context.Context, method string, params map[strin
 }
 
 func (c *MCPClient) Notify(method string, params map[string]any) error {
+	c.opMu.Lock()
+	defer c.opMu.Unlock()
+
 	return c.send(map[string]any{"jsonrpc": "2.0", "method": method, "params": params})
 }

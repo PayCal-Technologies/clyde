@@ -90,6 +90,25 @@ func TestWriteBundleRecordsBookMetadata(t *testing.T) {
 	}
 }
 
+func TestWriteBundleRecordsDiscoveryMetadata(t *testing.T) {
+	dir := t.TempDir()
+	manifest, err := WriteBundle(ScanResult{
+		Repo: dir,
+		Discovery: ScanDiscovery{
+			Method:            "git",
+			GitExclusionsUsed: true,
+			GitCommit:         "abc123",
+			GitWorkingTree:    "dirty",
+		},
+	}, filepath.Join(dir, "out"), 100, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Discovery.Method != "git" || !manifest.Discovery.GitExclusionsUsed || manifest.Discovery.GitCommit != "abc123" || manifest.Discovery.GitWorkingTree != "dirty" {
+		t.Fatalf("unexpected discovery metadata: %#v", manifest.Discovery)
+	}
+}
+
 func TestWriteBundleWritesChunkRecords(t *testing.T) {
 	dir := t.TempDir()
 	text := "package main\nfunc main() {}\n"
@@ -293,6 +312,46 @@ func TestWriteBundleRejectsSymlinkTargets(t *testing.T) {
 	_, err := WriteBundleWithOptions(ScanResult{Repo: dir}, outDir, 100, "", "", WriteBundleOptions{Force: true})
 	if err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("expected symlink refusal, got %v", err)
+	}
+}
+
+func TestWriteBundleRejectsSymlinkParentDirectory(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(t.TempDir(), "redirect")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, ".clyde")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	_, err := WriteBundle(ScanResult{Repo: dir}, filepath.Join(link, "out"), 100, "", "")
+
+	if err == nil || !strings.Contains(err.Error(), "symlink path component") {
+		t.Fatalf("expected symlink parent refusal, got %v", err)
+	}
+}
+
+func TestLoadBundleRejectsSymlinkManifest(t *testing.T) {
+	dir := t.TempDir()
+	outDir := filepath.Join(dir, "out")
+	if _, err := WriteBundle(ScanResult{Repo: dir}, outDir, 100, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(outDir, "manifest.json")
+	target := filepath.Join(dir, "manifest-target.json")
+	if err := os.Rename(manifestPath, target); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, manifestPath); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	_, err := LoadBundle(outDir)
+
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("expected symlink read refusal, got %v", err)
 	}
 }
 

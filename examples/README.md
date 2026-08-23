@@ -46,10 +46,16 @@ NotebookLM upload.
 ## NotebookLM Sync
 
 ```bash
-clyde sync . --approve-upload --subject "Repository review"
+clyde bundle . --out .clyde/out
+clyde bundle verify .clyde/out
+clyde sync --bundle .clyde/out \
+  --notebook-id "your-notebook-id" \
+  --approve-digest "sha256:..." \
+  --approve-upload
 ```
 
-Only use this after reviewing the preview or bundle output.
+Only use this after reviewing `.clyde/out/manifest.json`,
+`.clyde/out/chunks.jsonl`, and the digest printed by `bundle verify`.
 
 ## Shell Completion
 
