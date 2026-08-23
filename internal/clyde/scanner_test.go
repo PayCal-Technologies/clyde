@@ -81,6 +81,42 @@ func TestScanRepoSkipsSymlink(t *testing.T) {
 	}
 }
 
+func TestReadScannedFileRejectsReplacedPath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "file.txt")
+	mustWrite(t, path, "first\n")
+	stat, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, path, "second\n")
+
+	_, _, err = readScannedFile(path, stat, 250000)
+
+	if err == nil || !strings.Contains(err.Error(), "file changed during scan") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestReadScannedFileRejectsOversizedOpenedFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "large.txt")
+	mustWrite(t, path, "abcdef\n")
+	stat, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = readScannedFile(path, stat, 3)
+
+	if err == nil || !strings.Contains(err.Error(), "larger than 3 bytes") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestScanRepoIncludeCanMatchNoFiles(t *testing.T) {
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, "app.go"), "package main\n")

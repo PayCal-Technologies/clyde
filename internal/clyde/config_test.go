@@ -156,7 +156,7 @@ func TestLoadConfigDefaultsZeroValues(t *testing.T) {
 }
 
 func TestConfigCommandInitAndShow(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.json")
+	path := filepath.Join(t.TempDir(), "nested", "config.json")
 	t.Setenv("CLYDE_CONFIG", path)
 
 	var out, errOut bytes.Buffer
@@ -166,6 +166,11 @@ func TestConfigCommandInitAndShow(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatal(err)
+	}
+	if info, err := os.Stat(filepath.Dir(path)); err != nil {
+		t.Fatal(err)
+	} else if info.Mode().Perm() != 0o700 {
+		t.Fatalf("unexpected config dir mode: %v", info.Mode().Perm())
 	}
 	if info, err := os.Stat(path); err != nil {
 		t.Fatal(err)
@@ -185,5 +190,33 @@ func TestConfigCommandInitAndShow(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), `"model": "qwen2.5-coder:7b"`) {
 		t.Fatalf("unexpected config output: %s", out.String())
+	}
+}
+
+func TestConfigInitRefusesExistingSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.json")
+	mustWrite(t, target, "{}")
+	path := filepath.Join(dir, "config.json")
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLYDE_CONFIG", path)
+
+	var out, errOut bytes.Buffer
+	status := Main([]string{"config", "init"}, &out, &errOut)
+
+	if status != 1 {
+		t.Fatalf("expected failure")
+	}
+	if !strings.Contains(errOut.String(), "config already exists") {
+		t.Fatalf("unexpected stderr: %s", errOut.String())
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "{}" {
+		t.Fatalf("target was modified: %q", data)
 	}
 }

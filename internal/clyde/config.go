@@ -97,10 +97,10 @@ func WriteDefaultConfig(path string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0o600)
+	return writePrivateAtomic(path, append(data, '\n'))
 }
 
 func ValidateConfig(cfg Config) error {

@@ -103,13 +103,13 @@ func ScanRepo(repo string, include, exclude []string, maxFileBytes int64) (ScanR
 			appendSkip(&result, rel, "included file limit reached")
 			continue
 		}
-		if result.TotalBytes()+stat.Size() > maxTotalSourceBytes {
-			appendSkip(&result, rel, "total source byte limit reached")
-			continue
-		}
-		data, err := os.ReadFile(path)
+		data, openedStat, err := readScannedFile(path, stat, maxFileBytes)
 		if err != nil {
 			appendSkip(&result, rel, "read failed: "+err.Error())
+			continue
+		}
+		if result.TotalBytes()+openedStat.Size() > maxTotalSourceBytes {
+			appendSkip(&result, rel, "total source byte limit reached")
 			continue
 		}
 		if looksBinary(data) {
@@ -125,7 +125,7 @@ func ScanRepo(repo string, include, exclude []string, maxFileBytes int64) (ScanR
 		result.Files = append(result.Files, FileRecord{
 			Path:   path,
 			Rel:    rel,
-			Size:   stat.Size(),
+			Size:   openedStat.Size(),
 			SHA256: hex.EncodeToString(sum[:]),
 			Text:   text,
 		})
