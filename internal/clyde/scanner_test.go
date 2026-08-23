@@ -166,15 +166,16 @@ func TestScanRepoSkipsSymlink(t *testing.T) {
 func TestReadScannedFileRejectsReplacedPath(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "file.txt")
+	replacement := filepath.Join(dir, "replacement.txt")
 	mustWrite(t, path, "first\n")
 	stat, err := os.Lstat(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(path); err != nil {
+	mustWrite(t, replacement, "second\n")
+	if err := os.Rename(replacement, path); err != nil {
 		t.Fatal(err)
 	}
-	mustWrite(t, path, "second\n")
 
 	_, _, err = readScannedFile(path, stat, 250000)
 
