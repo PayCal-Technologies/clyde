@@ -39,7 +39,7 @@ func cmdConfig(args []string, out io.Writer) error {
 		fmt.Fprintln(out, string(data))
 		return nil
 	case "init":
-		if _, err := os.Stat(path); err == nil {
+		if _, err := os.Lstat(path); err == nil {
 			return errf("config already exists: %s", path)
 		} else if !os.IsNotExist(err) {
 			return err

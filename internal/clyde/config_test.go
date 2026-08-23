@@ -220,3 +220,45 @@ func TestConfigInitRefusesExistingSymlink(t *testing.T) {
 		t.Fatalf("target was modified: %q", data)
 	}
 }
+
+func TestConfigInitRefusesDanglingSymlink(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if err := os.Symlink(filepath.Join(dir, "missing.json"), path); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLYDE_CONFIG", path)
+
+	var out, errOut bytes.Buffer
+	status := Main([]string{"config", "init"}, &out, &errOut)
+
+	if status != 1 {
+		t.Fatalf("expected failure")
+	}
+	if !strings.Contains(errOut.String(), "config already exists") {
+		t.Fatalf("unexpected stderr: %s", errOut.String())
+	}
+	if info, err := os.Lstat(path); err != nil {
+		t.Fatal(err)
+	} else if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("expected symlink to remain, got %v", info.Mode())
+	}
+}
+
+func TestWriteDefaultConfigRefusesExistingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	mustWrite(t, path, "{}")
+
+	err := WriteDefaultConfig(path)
+
+	if err == nil || !strings.Contains(err.Error(), "config already exists") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "{}" {
+		t.Fatalf("config was modified: %q", data)
+	}
+}

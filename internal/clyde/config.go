@@ -92,6 +92,11 @@ func LoadConfig() (Config, string, error) {
 }
 
 func WriteDefaultConfig(path string) error {
+	if _, err := os.Lstat(path); err == nil {
+		return errf("config already exists: %s", path)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	cfg := DefaultConfig()
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
