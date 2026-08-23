@@ -475,33 +475,12 @@ func cmdCompletion(args []string, out io.Writer) error {
 		return flag.ErrHelp
 	}
 	if len(args) != 1 {
-		return errf("completion requires shell: bash, zsh, fish, powershell, pwsh, elvish, nushell, xonsh, tcsh, clink, yash, or oil")
+		return errf("completion requires shell: %s", supportedShellList())
 	}
-	switch args[0] {
-	case "bash":
-		io.WriteString(out, bashCompletionScript)
-	case "zsh":
-		io.WriteString(out, zshCompletionScript)
-	case "fish":
-		io.WriteString(out, fishCompletionScript)
-	case "powershell", "pwsh":
-		io.WriteString(out, powerShellCompletionScript)
-	case "elvish":
-		io.WriteString(out, elvishCompletionScript)
-	case "nushell", "nu":
-		io.WriteString(out, nushellCompletionScript)
-	case "xonsh":
-		io.WriteString(out, xonshCompletionScript)
-	case "tcsh":
-		io.WriteString(out, tcshCompletionScript)
-	case "clink":
-		io.WriteString(out, clinkCompletionScript)
-	case "yash":
-		io.WriteString(out, yashCompletionScript)
-	case "oil", "osh", "ysh":
-		io.WriteString(out, oilCompletionScript)
-	default:
-		return errf("unsupported shell %q; expected bash, zsh, fish, powershell, pwsh, elvish, nushell, xonsh, tcsh, clink, yash, or oil", args[0])
+	script, ok := completionScriptForShell(args[0])
+	if !ok {
+		return errf("unsupported shell %q; expected %s", args[0], supportedShellList())
 	}
+	io.WriteString(out, script)
 	return nil
 }

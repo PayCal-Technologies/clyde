@@ -59,41 +59,9 @@ func MainWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	switch args[0] {
-	case "about":
-		printAbout(stdout)
-		return nil
-	case "help":
-		return cmdHelp(args[1:], stdin, stdout, stderr)
-	case "completion":
-		return cmdCompletion(args[1:], stdout)
-	case "doctor":
-		return cmdDoctor(args[1:], stdout)
-	case "tui":
-		return RunTUI(stdin, stdout, stderr)
-	case "config":
-		return cmdConfig(args[1:], stdout)
-	case "preview":
-		return cmdPreview(args[1:], stdout)
-	case "scan-report":
-		return cmdScanReport(args[1:], stdout)
-	case "bundle":
-		return cmdBundle(args[1:], stdout)
-	case "sync":
-		return cmdSync(args[1:], stdout, stderr)
-	case "daemon":
-		return cmdDaemon(args[1:], stdout)
-	case "status":
-		return cmdStatus(args[1:], stdout)
-	case "book":
-		return cmdBook(args[1:], stdout)
-	case "models":
-		return cmdModels(args[1:], stdout)
-	case "ask":
-		return cmdAsk(args[1:], stdin, stdout)
-	case "agent":
-		return cmdAgent(args[1:], stdin, stdout)
-	default:
+	handler, ok := commandHandler(args[0])
+	if !ok {
 		return errf("unknown command: %s", args[0])
 	}
+	return handler(args[1:], stdin, stdout, stderr)
 }

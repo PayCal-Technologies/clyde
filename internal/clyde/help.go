@@ -8,7 +8,7 @@ import (
 )
 
 func printHelp(out io.Writer) {
-	fmt.Fprintln(out, "usage: clyde {about,help,completion,doctor,tui,config,preview,scan-report,bundle,sync,daemon,status,book,models,ask,agent} ...")
+	fmt.Fprintf(out, "usage: clyde {%s} ...\n", topLevelCommandUsageList())
 	fmt.Fprintln(out, "run clyde with no arguments in a terminal to open the TUI")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "examples:")
@@ -42,7 +42,7 @@ func cmdHelp(args []string, stdin io.Reader, out, errOut io.Writer) error {
 			"home":     productHomeURL,
 			"help":     productHelpURL,
 			"github":   productGitHubURL,
-			"commands": commandCatalog,
+			"commands": commandCatalog(),
 		}, "", "  ")
 		if err != nil {
 			return err
@@ -99,7 +99,7 @@ func printHelpCommand(out io.Writer) {
 }
 
 func printCompletionHelp(out io.Writer) {
-	fmt.Fprintln(out, "usage: clyde completion {bash|zsh|fish|powershell|pwsh|elvish|nushell|nu|xonsh|tcsh|clink|yash|oil|osh|ysh}")
+	fmt.Fprintf(out, "usage: clyde completion {%s}\n", supportedShellChoiceList())
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Generate shell completion scripts for Clyde.")
 	fmt.Fprintln(out)
@@ -164,15 +164,6 @@ func printBookHelp(out io.Writer) {
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "example:")
 	fmt.Fprintln(out, "  clyde book Clyde self feedback")
-}
-
-func commandByName(name string) (commandInfo, bool) {
-	for _, command := range commandCatalog {
-		if command.Name == name {
-			return command, true
-		}
-	}
-	return commandInfo{}, false
 }
 
 func printCommandInfo(out io.Writer, command commandInfo) {
