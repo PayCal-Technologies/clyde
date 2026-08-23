@@ -1,11 +1,6 @@
 package clyde
 
-import (
-	"encoding/json"
-	"os"
-	"path/filepath"
-	"time"
-)
+import "time"
 
 type SyncReceipt struct {
 	Schema       string              `json:"schema"`
@@ -53,33 +48,6 @@ func newSyncReceipt(opts SyncOptions) SyncReceipt {
 		Backend:      opts.Backend,
 		TitlePrefix:  opts.TitlePrefix,
 	}
-}
-
-func loadSyncReceipt(path string) (SyncReceipt, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return SyncReceipt{}, err
-	}
-	var receipt SyncReceipt
-	if err := json.Unmarshal(data, &receipt); err != nil {
-		return SyncReceipt{}, err
-	}
-	if receipt.Schema != "clyde.sync_receipt.v1" {
-		return SyncReceipt{}, errf("unsupported sync receipt schema: %s", receipt.Schema)
-	}
-	return receipt, nil
-}
-
-func saveSyncReceipt(path string, receipt SyncReceipt) error {
-	receipt.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	data, err := json.MarshalIndent(receipt, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	return writePrivateAtomic(path, append(data, '\n'))
 }
 
 func (r SyncReceipt) canResume(opts SyncOptions) bool {
@@ -163,69 +131,4 @@ func syncDestination(opts SyncOptions) string {
 		return "notebook_id:" + opts.NotebookID
 	}
 	return "notebook_url:" + opts.NotebookURL
-}
-
-func prepareSyncReceipt(opts SyncOptions) (*SyncReceipt, error) {
-	if opts.ReceiptPath == "" {
-		return nil, nil
-	}
-	if opts.Backend == "" {
-		opts.Backend = "mcp"
-	}
-	if opts.Resume {
-		receipt, err := loadSyncReceipt(opts.ReceiptPath)
-		if err == nil {
-			if !receipt.canResume(opts) {
-				return nil, errf("sync receipt does not match requested transfer")
-			}
-			return &receipt, nil
-		}
-		if !os.IsNotExist(err) {
-			return nil, err
-		}
-	}
-	receipt := newSyncReceipt(opts)
-	if err := saveSyncReceipt(opts.ReceiptPath, receipt); err != nil {
-		return nil, err
-	}
-	return &receipt, nil
-}
-
-func recordSyncReceiptChunk(opts SyncOptions, receipt *SyncReceipt, chunk ChunkRecord, title, sourceID, status string, err error) {
-	if receipt == nil || opts.ReceiptPath == "" {
-		return
-	}
-	receipt.recordChunk(chunk, title, sourceID, status, err)
-	_ = saveSyncReceipt(opts.ReceiptPath, *receipt)
-}
-
-func sourceIDFromJSON(data []byte) string {
-	var value any
-	if err := json.Unmarshal(data, &value); err != nil {
-		return ""
-	}
-	return sourceIDFromAny(value)
-}
-
-func sourceIDFromAny(value any) string {
-	switch v := value.(type) {
-	case map[string]any:
-		for _, key := range []string{"source_id", "sourceId", "id"} {
-			if id, ok := v[key].(string); ok && id != "" {
-				return id
-			}
-		}
-		for _, nested := range v {
-			if id := sourceIDFromAny(nested); id != "" {
-				return id
-			}
-		}
-	case []any:
-		for _, nested := range v {
-			if id := sourceIDFromAny(nested); id != "" {
-				return id
-			}
-		}
-	}
-	return ""
 }
