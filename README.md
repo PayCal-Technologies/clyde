@@ -74,7 +74,10 @@ Use this procedure for every Clyde release and performance pass:
    workflow builds deterministic Linux, macOS, and Windows archives, verifies
    archive contents, publishes SHA-256 checksums and an SPDX-compatible SBOM,
    then verifies published asset checksums.
-7. Rebuild the local global install after the release when this workstation
+7. Keep GitHub workflow changes local-only and repo-controlled. Before changing
+   workflows, run `.github/scripts/check-github-policy.sh` and follow
+   `.github/WORKFLOW_POLICY.md`.
+8. Rebuild the local global install after the release when this workstation
    needs the new `clyde` binary.
 
 ## Install From Source

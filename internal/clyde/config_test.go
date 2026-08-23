@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -127,6 +128,9 @@ func TestLoadConfigRejectsNegativeLimits(t *testing.T) {
 }
 
 func TestLoadConfigRejectsWritableConfigFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix permission bits are not a Windows privacy boundary")
+	}
 	path := filepath.Join(t.TempDir(), "config.json")
 	t.Setenv("CLYDE_CONFIG", path)
 	mustWrite(t, path, `{}`)
@@ -169,12 +173,12 @@ func TestConfigCommandInitAndShow(t *testing.T) {
 	}
 	if info, err := os.Stat(filepath.Dir(path)); err != nil {
 		t.Fatal(err)
-	} else if info.Mode().Perm() != 0o700 {
+	} else if runtime.GOOS != "windows" && info.Mode().Perm() != 0o700 {
 		t.Fatalf("unexpected config dir mode: %v", info.Mode().Perm())
 	}
 	if info, err := os.Stat(path); err != nil {
 		t.Fatal(err)
-	} else if info.Mode().Perm() != 0o600 {
+	} else if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("unexpected config mode: %v", info.Mode().Perm())
 	}
 

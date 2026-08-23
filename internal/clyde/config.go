@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -239,6 +240,9 @@ func validatePositiveInt64(name string, value, max int64) error {
 }
 
 func validateConfigFileMode(path string, perm os.FileMode) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
 	if perm&0o022 != 0 {
 		return errf("config file must not be group- or world-writable: %s", path)
 	}

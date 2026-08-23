@@ -75,7 +75,12 @@ All tests currently live under `internal/clyde`.
 
 ## CI Test Matrix
 
-The GitHub Actions workflow is `.github/workflows/test.yml`.
+The GitHub Actions workflow is `.github/workflows/test.yml`. Clyde's GitHub
+organization uses a local-only Actions policy, so workflows must not use
+external `uses:` steps. Bootstrap checkout is inline, and post-checkout logic
+lives in `.github/scripts/`. The policy guard
+`.github/scripts/check-github-policy.sh` rejects blocked workflow patterns and
+unpinned `@latest` CI tools.
 
 The main matrix runs:
 
@@ -96,6 +101,12 @@ Linux also runs fuzz smoke tests for chunk splitting, JSON-RPC envelope parsing,
 glob matching, and secret detection. A separate analysis job runs pinned
 Staticcheck and govulncheck versions. These checks do not prove external tools such as Ollama,
 Node/npm, NotebookLM MCP, or `nlm` are available in every environment.
+
+Before changing GitHub workflows, read `.github/WORKFLOW_POLICY.md` and run:
+
+```bash
+.github/scripts/check-github-policy.sh
+```
 
 ## Test Commands By Purpose
 

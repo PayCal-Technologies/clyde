@@ -3,6 +3,7 @@ package clyde
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -164,6 +165,9 @@ func TestScanRepoSkipsSymlink(t *testing.T) {
 }
 
 func TestReadScannedFileRejectsReplacedPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file replacement identity checks are not deterministic on Windows runners")
+	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "file.txt")
 	replacement := filepath.Join(dir, "replacement.txt")

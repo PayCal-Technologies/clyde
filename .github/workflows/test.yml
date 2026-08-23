@@ -28,32 +28,11 @@ jobs:
           git checkout --detach FETCH_HEAD
       - name: Check Go
         shell: bash
-        run: |
-          set -euo pipefail
-          version="$(awk '$1 == "go" { print $2 }' go.mod)"
-          os="$(uname -s | tr '[:upper:]' '[:lower:]')"
-          arch="$(uname -m)"
-          case "$os" in
-            linux*) goos="linux" ;;
-            darwin*) goos="darwin" ;;
-            mingw*|msys*|cygwin*) goos="windows" ;;
-            *) echo "unsupported OS: $os" >&2; exit 1 ;;
-          esac
-          case "$arch" in
-            x86_64|amd64) goarch="amd64" ;;
-            arm64|aarch64) goarch="arm64" ;;
-            *) echo "unsupported architecture: $arch" >&2; exit 1 ;;
-          esac
-          rm -rf "${RUNNER_TEMP}/go"
-          if [ "$goos" = "windows" ]; then
-            curl -fsSLo "${RUNNER_TEMP}/go.zip" "https://go.dev/dl/go${version}.${goos}-${goarch}.zip"
-            unzip -q "${RUNNER_TEMP}/go.zip" -d "${RUNNER_TEMP}"
-          else
-            curl -fsSLo "${RUNNER_TEMP}/go.tar.gz" "https://go.dev/dl/go${version}.${goos}-${goarch}.tar.gz"
-            tar -C "${RUNNER_TEMP}" -xzf "${RUNNER_TEMP}/go.tar.gz"
-          fi
-          echo "${RUNNER_TEMP}/go/bin" >> "$GITHUB_PATH"
-          "${RUNNER_TEMP}/go/bin/go" version
+        run: .github/scripts/install-go.sh
+      - name: GitHub policy guard
+        if: runner.os == 'Linux'
+        shell: bash
+        run: .github/scripts/check-github-policy.sh
       - name: Verify gofmt
         if: runner.os != 'Windows'
         run: test -z "$(find . -name '*.go' -print0 | xargs -0 gofmt -l)"
@@ -92,19 +71,12 @@ jobs:
           git fetch --depth=1 origin "${GITHUB_SHA}"
           git checkout --detach FETCH_HEAD
       - name: Check Go
-        run: |
-          set -euo pipefail
-          version="$(awk '$1 == "go" { print $2 }' go.mod)"
-          rm -rf "${RUNNER_TEMP}/go"
-          curl -fsSLo "${RUNNER_TEMP}/go.tar.gz" "https://go.dev/dl/go${version}.linux-amd64.tar.gz"
-          tar -C "${RUNNER_TEMP}" -xzf "${RUNNER_TEMP}/go.tar.gz"
-          echo "${RUNNER_TEMP}/go/bin" >> "$GITHUB_PATH"
-          "${RUNNER_TEMP}/go/bin/go" version
+        run: .github/scripts/install-go.sh linux amd64
       - name: Staticcheck
         run: |
           go install honnef.co/go/tools/cmd/staticcheck@v0.8.0
-          staticcheck ./...
+          "$(go env GOPATH)/bin/staticcheck" ./...
       - name: Govulncheck
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
-          govulncheck ./...
+          "$(go env GOPATH)/bin/govulncheck" ./...

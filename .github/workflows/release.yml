@@ -22,14 +22,10 @@ jobs:
           git fetch --depth=1 origin "${GITHUB_SHA}"
           git checkout --detach FETCH_HEAD
       - name: Check Go
-        run: |
-          set -euo pipefail
-          version="$(awk '$1 == "go" { print $2 }' go.mod)"
-          rm -rf "${RUNNER_TEMP}/go"
-          curl -fsSLo "${RUNNER_TEMP}/go.tar.gz" "https://go.dev/dl/go${version}.linux-amd64.tar.gz"
-          tar -C "${RUNNER_TEMP}" -xzf "${RUNNER_TEMP}/go.tar.gz"
-          echo "${RUNNER_TEMP}/go/bin" >> "$GITHUB_PATH"
-          "${RUNNER_TEMP}/go/bin/go" version
+        run: .github/scripts/install-go.sh linux amd64
+      - name: GitHub policy guard
+        shell: bash
+        run: .github/scripts/check-github-policy.sh
       - name: Verify version tag
         run: |
           version="$(cat VERSION)"
@@ -39,105 +35,24 @@ jobs:
         run: go test ./...
       - name: Build archives
         shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          version="$(cat VERSION)"
-          source_date_epoch="$(git log -1 --format=%ct)"
-          for goos in linux darwin windows; do
-            for goarch in amd64 arm64; do
-              name="clyde_${version}_${goos}_${goarch}"
-              bin="clyde"
-              if [ "$goos" = "windows" ]; then bin="clyde.exe"; fi
-              mkdir -p "dist/${name}"
-              GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build \
-                -trimpath \
-                -ldflags "-s -w" \
-                -o "dist/${name}/${bin}" ./cmd/clyde
-              cp README.md LICENSE VERSION "dist/${name}/"
-              find "dist/${name}" -exec touch -h -d "@${source_date_epoch}" {} +
-              if [ "$goos" = "windows" ]; then
-                (cd dist && TZ=UTC zip -X -qr "${name}.zip" "${name}")
-              else
-                tar \
-                  --sort=name \
-                  --mtime="@${source_date_epoch}" \
-                  --owner=0 \
-                  --group=0 \
-                  --numeric-owner \
-                  -C dist -czf "dist/${name}.tar.gz" "${name}"
-              fi
-              rm -rf "dist/${name}"
-            done
-          done
-          (cd dist && sha256sum *.tar.gz *.zip > SHA256SUMS)
+        run: .github/scripts/build-release.sh
       - name: Generate SPDX SBOM
         shell: bash
-        run: |
-          set -euo pipefail
-          version="$(cat VERSION)"
-          source_date_epoch="$(git log -1 --format=%ct)"
-          created="$(date -u -d "@${source_date_epoch}" +%Y-%m-%dT%H:%M:%SZ)"
-          cat > dist/clyde.spdx.json <<EOF
-          {
-            "spdxVersion": "SPDX-2.3",
-            "dataLicense": "CC0-1.0",
-            "SPDXID": "SPDXRef-DOCUMENT",
-            "name": "clyde-${version}",
-            "documentNamespace": "https://github.com/PayCal-Technologies/clyde/releases/tag/v${version}#spdx",
-            "creationInfo": {
-              "created": "${created}",
-              "creators": ["Tool: Clyde release workflow"]
-            },
-            "packages": [
-              {
-                "name": "clyde",
-                "SPDXID": "SPDXRef-Package-clyde",
-                "versionInfo": "${version}",
-                "downloadLocation": "https://github.com/PayCal-Technologies/clyde",
-                "filesAnalyzed": false,
-                "licenseDeclared": "0BSD",
-                "copyrightText": "NOASSERTION"
-              }
-            ]
-          }
-          EOF
+        run: .github/scripts/generate-sbom.sh
       - name: Smoke test release archives
         shell: bash
-        run: |
-          set -euo pipefail
-          version="$(cat VERSION)"
-          (cd dist && sha256sum -c SHA256SUMS)
-          for archive in dist/*.tar.gz; do
-            name="$(basename "$archive" .tar.gz)"
-            rm -rf /tmp/clyde-release-smoke
-            mkdir -p /tmp/clyde-release-smoke
-            tar -C /tmp/clyde-release-smoke -xzf "$archive"
-            test -f "/tmp/clyde-release-smoke/${name}/README.md"
-            test -f "/tmp/clyde-release-smoke/${name}/LICENSE"
-            test -f "/tmp/clyde-release-smoke/${name}/VERSION"
-            test -x "/tmp/clyde-release-smoke/${name}/clyde"
-            if [[ "$name" == "clyde_${version}_linux_amd64" ]]; then
-              "/tmp/clyde-release-smoke/${name}/clyde" --about
-            fi
-          done
-          for archive in dist/*.zip; do
-            name="$(basename "$archive" .zip)"
-            rm -rf /tmp/clyde-release-smoke
-            mkdir -p /tmp/clyde-release-smoke
-            unzip -q "$archive" -d /tmp/clyde-release-smoke
-            test -f "/tmp/clyde-release-smoke/${name}/README.md"
-            test -f "/tmp/clyde-release-smoke/${name}/LICENSE"
-            test -f "/tmp/clyde-release-smoke/${name}/VERSION"
-            test -f "/tmp/clyde-release-smoke/${name}/clyde.exe"
-          done
+        run: .github/scripts/smoke-release.sh
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          gh release create "${GITHUB_REF_NAME}" dist/* --verify-tag --generate-notes
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" dist/* --verify-tag --generate-notes
+          fi
       - name: Verify published release assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -146,4 +61,8 @@ jobs:
           set -euo pipefail
           mkdir -p /tmp/clyde-published-assets
           gh release download "${GITHUB_REF_NAME}" --dir /tmp/clyde-published-assets
-          (cd /tmp/clyde-published-assets && sha256sum -c SHA256SUMS)
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd /tmp/clyde-published-assets && sha256sum -c SHA256SUMS)
+          else
+            (cd /tmp/clyde-published-assets && shasum -a 256 -c SHA256SUMS)
+          fi
