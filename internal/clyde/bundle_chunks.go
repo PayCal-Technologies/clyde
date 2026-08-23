@@ -6,14 +6,30 @@ import (
 	"unicode/utf8"
 )
 
+const (
+	minChunkBodyBytes  = 64
+	maxGeneratedChunks = 200000
+)
+
 func MakeChunks(result ScanResult, maxChunkChars int, bookTitle string) []ChunkRecord {
+	chunks, _ := MakeChunksWithLimit(result, maxChunkChars, bookTitle, 0)
+	return chunks
+}
+
+func MakeChunksWithLimit(result ScanResult, maxChunkChars int, bookTitle string, maxChunks int) ([]ChunkRecord, error) {
 	if maxChunkChars <= 0 {
 		maxChunkChars = DefaultConfig().MaxChunkChars
+	}
+	if maxChunks <= 0 {
+		maxChunks = maxGeneratedChunks
 	}
 	var chunks []ChunkRecord
 	for _, file := range result.Files {
 		pieces := splitText(file.Text, maxChunkChars)
 		for i, piece := range pieces {
+			if len(chunks) >= maxChunks {
+				return nil, errf("generated chunk limit exceeded; maximum is %d", maxChunks)
+			}
 			header := chunkHeader(result.Repo, bookTitle, file.Rel, file.SHA256, i+1, len(pieces))
 			text := header + piece
 			chunks = append(chunks, ChunkRecord{
@@ -26,7 +42,7 @@ func MakeChunks(result ScanResult, maxChunkChars int, bookTitle string) []ChunkR
 			})
 		}
 	}
-	return chunks
+	return chunks, nil
 }
 
 func chunkHeader(repo, bookTitle, path, sha256 string, index, total int) string {

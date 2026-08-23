@@ -5,7 +5,6 @@ import "context"
 var defaultMCPCommand = []string{"npx", "-y", "notebooklm-mcp@2.0.0"}
 
 var defaultMCPEnv = map[string]string{
-	"NOTEBOOKLM_ACCOUNT":        "codex-test",
 	"NOTEBOOKLM_TRANSPORT":      "stdio",
 	"NOTEBOOKLM_PROFILE":        "all",
 	"NOTEBOOKLM_DISABLED_TOOLS": "cleanup_data,re_auth,remove_notebook,update_notebook",
@@ -65,11 +64,16 @@ func syncChunksMCP(ctx context.Context, chunks []ChunkRecord, opts SyncOptions, 
 		result, err := client.CallTool(ctx, "add_source", args)
 		if err != nil {
 			emitError(sink, opts.JobID, "failed", "failed uploading "+title, count, len(chunks), chunk.Path, err)
-			recordSyncReceiptChunk(opts, receipt, chunk, title, "", "failed", err)
+			if receiptErr := recordSyncReceiptChunk(opts, receipt, chunk, title, "", "failed", err); receiptErr != nil {
+				return count, receiptErr
+			}
 			return count, errf("failed uploading %s chunk %d/%d: %w", chunk.Path, chunk.ChunkIndex, chunk.ChunkTotal, err)
 		}
 		count++
-		recordSyncReceiptChunk(opts, receipt, chunk, title, sourceIDFromAny(result), "uploaded", nil)
+		if err := recordSyncReceiptChunk(opts, receipt, chunk, title, sourceIDFromAny(result), "uploaded", nil); err != nil {
+			emitError(sink, opts.JobID, "failed", "failed recording receipt for "+title, count, len(chunks), chunk.Path, err)
+			return count, err
+		}
 		emit(sink, opts.JobID, "uploaded", "uploaded "+title, count, len(chunks), chunk.Path)
 	}
 	emit(sink, opts.JobID, "complete", "uploaded "+itoa(int64(count))+" chunks", count, len(chunks), "")

@@ -38,6 +38,73 @@ func TestScanRepoRespectsExclude(t *testing.T) {
 	}
 }
 
+func TestScanRepoExcludesClydeOutputByDefault(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "app.go"), "package main\n")
+	if err := os.MkdirAll(filepath.Join(dir, ".clyde", "out"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(dir, ".clyde", "out", "chunks.jsonl"), "prior source\n")
+
+	result, err := ScanRepo(dir, nil, nil, 250000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Files) != 1 || result.Files[0].Rel != "app.go" {
+		t.Fatalf("unexpected files: %#v", result.Files)
+	}
+	if len(result.Skips) != 1 || result.Skips[0].Path != ".clyde/out/chunks.jsonl" || result.Skips[0].Reason != "excluded by glob" {
+		t.Fatalf("unexpected skips: %#v", result.Skips)
+	}
+}
+
+func TestScanRepoSkipsInvalidUTF8(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "bad.txt"), []byte{0xff, 0xfe, '\n'}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := ScanRepo(dir, nil, nil, 250000)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Files) != 0 {
+		t.Fatalf("expected no files, got %#v", result.Files)
+	}
+	if len(result.Skips) != 1 || result.Skips[0].Reason != "invalid UTF-8" {
+		t.Fatalf("unexpected skips: %#v", result.Skips)
+	}
+}
+
+func TestScanRepoSkipsSuspiciousPathString(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "ok.txt"), "ok\n")
+	mustWrite(t, filepath.Join(dir, "evil\u202egpj.txt"), "spoof\n")
+
+	result, err := ScanRepo(dir, nil, nil, 250000)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Files) != 1 || result.Files[0].Rel != "ok.txt" {
+		t.Fatalf("unexpected files: %#v", result.Files)
+	}
+	if len(result.Skips) != 1 || !strings.Contains(result.Skips[0].Reason, "invalid path string") {
+		t.Fatalf("unexpected skips: %#v", result.Skips)
+	}
+}
+
+func TestScanRepoRejectsInvalidGlob(t *testing.T) {
+	dir := t.TempDir()
+
+	_, err := ScanRepo(dir, []string{"["}, nil, 250000)
+
+	if err == nil || !strings.Contains(err.Error(), "invalid glob pattern") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestScanRepoRejectsFilePath(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "file.go")

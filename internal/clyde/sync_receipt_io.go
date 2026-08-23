@@ -52,6 +52,10 @@ func prepareSyncReceipt(opts SyncOptions) (*SyncReceipt, error) {
 		if !os.IsNotExist(err) {
 			return nil, err
 		}
+	} else if _, err := os.Lstat(opts.ReceiptPath); err == nil {
+		return nil, errf("sync receipt already exists; use --resume or choose a new receipt path: %s", opts.ReceiptPath)
+	} else if !os.IsNotExist(err) {
+		return nil, err
 	}
 	receipt := newSyncReceipt(opts)
 	if err := saveSyncReceipt(opts.ReceiptPath, receipt); err != nil {
@@ -60,10 +64,10 @@ func prepareSyncReceipt(opts SyncOptions) (*SyncReceipt, error) {
 	return &receipt, nil
 }
 
-func recordSyncReceiptChunk(opts SyncOptions, receipt *SyncReceipt, chunk ChunkRecord, title, sourceID, status string, err error) {
+func recordSyncReceiptChunk(opts SyncOptions, receipt *SyncReceipt, chunk ChunkRecord, title, sourceID, status string, err error) error {
 	if receipt == nil || opts.ReceiptPath == "" {
-		return
+		return nil
 	}
 	receipt.recordChunk(chunk, title, sourceID, status, err)
-	_ = saveSyncReceipt(opts.ReceiptPath, *receipt)
+	return saveSyncReceipt(opts.ReceiptPath, *receipt)
 }

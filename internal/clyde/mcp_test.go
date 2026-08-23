@@ -38,6 +38,32 @@ func TestMCPReadMessageRejectsOversizedFrame(t *testing.T) {
 	}
 }
 
+func TestMCPReadMessageRejectsOversizedHeaderLine(t *testing.T) {
+	client := &MCPClient{
+		reader:  bufio.NewReader(strings.NewReader(strings.Repeat("x", maxMCPHeaderLineBytes+1) + "\n\r\n{}")),
+		framing: "content-length",
+	}
+
+	_, err := client.readMessage(context.Background())
+
+	if err == nil || !strings.Contains(err.Error(), "line is too large") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestMCPReadMessageRejectsOversizedNewlineFrame(t *testing.T) {
+	client := &MCPClient{
+		reader:  bufio.NewReader(strings.NewReader(strings.Repeat("x", maxMCPFrameBytes+1) + "\n")),
+		framing: "newline",
+	}
+
+	_, err := client.readMessage(context.Background())
+
+	if err == nil || !strings.Contains(err.Error(), "line is too large") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestMCPBaseEnvDoesNotForwardCredentials(t *testing.T) {
 	t.Setenv("PATH", os.Getenv("PATH"))
 	t.Setenv("GITHUB_TOKEN", "secret")

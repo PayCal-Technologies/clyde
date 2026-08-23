@@ -75,7 +75,10 @@ func WriteBundleWithOptions(result ScanResult, outDir string, maxChunkChars int,
 	if err := os.Chmod(outDir, 0o700); err != nil {
 		return Manifest{}, fmt.Errorf("secure bundle output directory %s: %w", outDir, err)
 	}
-	chunks := MakeChunks(result, maxChunkChars, bookTitle)
+	chunks, err := MakeChunksWithLimit(result, maxChunkChars, bookTitle, maxGeneratedChunks)
+	if err != nil {
+		return Manifest{}, err
+	}
 	manifest := Manifest{
 		Schema:        "clyde.bundle.v1",
 		ClydeVersion:  productVersion,
@@ -143,11 +146,11 @@ func WriteBundleWithOptions(result ScanResult, outDir string, maxChunkChars int,
 func LoadBundle(dir string) (Bundle, error) {
 	manifestPath := filepath.Join(dir, "manifest.json")
 	chunksPath := filepath.Join(dir, "chunks.jsonl")
-	manifestData, err := os.ReadFile(manifestPath)
+	manifestData, err := readFileLimited(manifestPath, maxBundleManifestBytes)
 	if err != nil {
 		return Bundle{}, fmt.Errorf("read bundle manifest %s: %w", manifestPath, err)
 	}
-	chunksData, err := os.ReadFile(chunksPath)
+	chunksData, err := readFileLimited(chunksPath, maxBundleChunksBytes)
 	if err != nil {
 		return Bundle{}, fmt.Errorf("read bundle chunks %s: %w", chunksPath, err)
 	}

@@ -60,6 +60,7 @@ func cmdBundle(args []string, out io.Writer) error {
 	if err == nil && !info.IsDir() {
 		return errf("--out must be a directory, not a file: %s", *outDir)
 	}
+	addRepoPathExclude(fs.Arg(0), *outDir, &flags)
 	result, err := ScanRepo(fs.Arg(0), flags.include, flags.exclude, flags.maxFileBytes)
 	if err != nil {
 		return err
@@ -115,10 +116,12 @@ func cmdBundleVerify(args []string, out io.Writer) error {
 }
 
 func runSecretScanCommand(ctx context.Context, commandLine, repo string) error {
-	commandLine = strings.ReplaceAll(commandLine, "{repo}", repo)
 	command := shellFields(commandLine)
 	if len(command) == 0 {
 		return errf("secret scan command must not be empty")
+	}
+	for i, arg := range command {
+		command[i] = strings.ReplaceAll(arg, "{repo}", repo)
 	}
 	if _, err := runCommand(ctx, command, nil, 10*time.Minute); err != nil {
 		return errf("secret scan command failed: %w", err)

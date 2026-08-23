@@ -3,16 +3,18 @@ package clyde
 import "time"
 
 type SyncReceipt struct {
-	Schema       string              `json:"schema"`
-	ClydeVersion string              `json:"clyde_version"`
-	CreatedAt    string              `json:"created_at"`
-	UpdatedAt    string              `json:"updated_at"`
-	BundleDigest string              `json:"bundle_digest,omitempty"`
-	Destination  string              `json:"destination"`
-	Backend      string              `json:"backend"`
-	TitlePrefix  string              `json:"title_prefix,omitempty"`
-	Chunks       []SyncReceiptChunk  `json:"chunks"`
-	Deletions    []SyncReceiptDelete `json:"deletions,omitempty"`
+	Schema                string              `json:"schema"`
+	ClydeVersion          string              `json:"clyde_version"`
+	CreatedAt             string              `json:"created_at"`
+	UpdatedAt             string              `json:"updated_at"`
+	BundleDigest          string              `json:"bundle_digest,omitempty"`
+	Destination           string              `json:"destination"`
+	Backend               string              `json:"backend"`
+	TitlePrefix           string              `json:"title_prefix,omitempty"`
+	DeleteExistingSources bool                `json:"delete_existing_sources,omitempty"`
+	DeletionPhase         string              `json:"deletion_phase,omitempty"`
+	Chunks                []SyncReceiptChunk  `json:"chunks"`
+	Deletions             []SyncReceiptDelete `json:"deletions,omitempty"`
 }
 
 type SyncReceiptChunk struct {
@@ -39,14 +41,15 @@ type SyncReceiptDelete struct {
 func newSyncReceipt(opts SyncOptions) SyncReceipt {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	return SyncReceipt{
-		Schema:       "clyde.sync_receipt.v1",
-		ClydeVersion: productVersion,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-		BundleDigest: opts.BundleDigest,
-		Destination:  syncDestination(opts),
-		Backend:      opts.Backend,
-		TitlePrefix:  opts.TitlePrefix,
+		Schema:                "clyde.sync_receipt.v1",
+		ClydeVersion:          productVersion,
+		CreatedAt:             now,
+		UpdatedAt:             now,
+		BundleDigest:          opts.BundleDigest,
+		Destination:           syncDestination(opts),
+		Backend:               opts.Backend,
+		TitlePrefix:           opts.TitlePrefix,
+		DeleteExistingSources: opts.DeleteExistingSources,
 	}
 }
 
@@ -54,7 +57,8 @@ func (r SyncReceipt) canResume(opts SyncOptions) bool {
 	return r.BundleDigest == opts.BundleDigest &&
 		r.Destination == syncDestination(opts) &&
 		r.Backend == opts.Backend &&
-		r.TitlePrefix == opts.TitlePrefix
+		r.TitlePrefix == opts.TitlePrefix &&
+		r.DeleteExistingSources == opts.DeleteExistingSources
 }
 
 func (r SyncReceipt) uploaded(chunk ChunkRecord, title string) bool {
@@ -99,6 +103,14 @@ func (r *SyncReceipt) recordChunk(chunk ChunkRecord, title, sourceID, status str
 		}
 	}
 	r.Chunks = append(r.Chunks, entry)
+}
+
+func (r SyncReceipt) deletionCompleted() bool {
+	return r.DeletionPhase == "completed"
+}
+
+func (r *SyncReceipt) recordDeletionPhase(phase string) {
+	r.DeletionPhase = phase
 }
 
 func (r *SyncReceipt) recordDeletions(sources []map[string]any, status string) {

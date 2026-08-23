@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -29,7 +30,32 @@ func scanAndChunk(repo string, flags scanFlags, bookTitle string) (ScanResult, [
 	if err != nil {
 		return ScanResult{}, nil, err
 	}
-	return result, MakeChunks(result, flags.maxChunkChars, bookTitle), nil
+	chunks, err := MakeChunksWithLimit(result, flags.maxChunkChars, bookTitle, maxGeneratedChunks)
+	if err != nil {
+		return ScanResult{}, nil, err
+	}
+	return result, chunks, nil
+}
+
+func addRepoPathExclude(repo, path string, flags *scanFlags) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	absRepo, err := filepath.Abs(repo)
+	if err != nil {
+		return
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return
+	}
+	rel, err := filepath.Rel(absRepo, absPath)
+	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return
+	}
+	rel = filepath.ToSlash(rel)
+	flags.exclude = append(flags.exclude, rel)
+	flags.exclude = append(flags.exclude, rel+"/**")
 }
 
 func planFromArgs(subject, bookTitle string) (BookPlan, error) {
@@ -43,8 +69,14 @@ func validateScanFlags(flags scanFlags) error {
 	if flags.maxFileBytes <= 0 {
 		return errf("max-file-bytes must be greater than 0")
 	}
-	if flags.maxChunkChars <= 0 {
-		return errf("max-chunk-chars must be greater than 0")
+	if flags.maxChunkChars < minChunkBodyBytes {
+		return errf("max-chunk-chars must be at least %d", minChunkBodyBytes)
+	}
+	if err := validateGlobPatterns(flags.include); err != nil {
+		return errf("--include %v", err)
+	}
+	if err := validateGlobPatterns(flags.exclude); err != nil {
+		return errf("--exclude %v", err)
 	}
 	return nil
 }
@@ -73,7 +105,11 @@ func validateCommandFlag(name, value string) error {
 	if strings.ContainsRune(value, 0) {
 		return errf("--%s must not contain NUL bytes", name)
 	}
-	if len(shellFields(value)) == 0 {
+	fields, err := shellFieldsE(value)
+	if err != nil {
+		return errf("--%s %v", name, err)
+	}
+	if len(fields) == 0 {
 		return errf("--%s must not be empty", name)
 	}
 	return nil
@@ -103,7 +139,63 @@ func (m *multiFlag) Set(value string) error {
 }
 
 func shellFields(value string) []string {
-	return strings.Fields(value)
+	fields, _ := shellFieldsE(value)
+	return fields
+}
+
+func shellFieldsE(value string) ([]string, error) {
+	var fields []string
+	var current strings.Builder
+	var quote rune
+	escaped := false
+	inField := false
+	for _, r := range value {
+		if escaped {
+			current.WriteRune(r)
+			inField = true
+			escaped = false
+			continue
+		}
+		if quote == '"' && r == '\\' {
+			escaped = true
+			continue
+		}
+		if quote != 0 {
+			if r == quote {
+				quote = 0
+				inField = true
+				continue
+			}
+			current.WriteRune(r)
+			inField = true
+			continue
+		}
+		if r == '\'' || r == '"' {
+			quote = r
+			inField = true
+			continue
+		}
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
+			if inField {
+				fields = append(fields, current.String())
+				current.Reset()
+				inField = false
+			}
+			continue
+		}
+		current.WriteRune(r)
+		inField = true
+	}
+	if escaped {
+		current.WriteRune('\\')
+	}
+	if quote != 0 {
+		return nil, errf("has unterminated quote")
+	}
+	if inField {
+		fields = append(fields, current.String())
+	}
+	return fields, nil
 }
 
 func min(a, b int) int {

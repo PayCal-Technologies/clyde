@@ -30,22 +30,22 @@ func (c *MCPClient) readMessage(ctx context.Context) (map[string]any, error) {
 	ch := make(chan result, 1)
 	go func() {
 		if c.framing == "newline" {
-			line, err := c.reader.ReadBytes('\n')
+			line, err := readMCPLine(c.reader, maxMCPFrameBytes)
 			if err != nil {
 				ch <- result{err: err}
 				return
 			}
 			var msg map[string]any
-			ch <- result{msg: msg, err: json.Unmarshal(bytes.TrimSpace(line), &msg)}
+			ch <- result{msg: msg, err: json.Unmarshal([]byte(strings.TrimSpace(line)), &msg)}
 			return
 		}
-		header, err := c.reader.ReadString('\n')
+		header, err := readMCPLine(c.reader, maxMCPHeaderLineBytes)
 		if err != nil {
 			ch <- result{err: err}
 			return
 		}
 		for strings.TrimSpace(header) == "" {
-			header, err = c.reader.ReadString('\n')
+			header, err = readMCPLine(c.reader, maxMCPHeaderLineBytes)
 			if err != nil {
 				ch <- result{err: err}
 				return
@@ -63,7 +63,7 @@ func (c *MCPClient) readMessage(ctx context.Context) (map[string]any, error) {
 				}
 				length = n
 			}
-			next, err := c.reader.ReadString('\n')
+			next, err := readMCPLine(c.reader, maxMCPHeaderLineBytes)
 			if err != nil {
 				ch <- result{err: err}
 				return
@@ -95,4 +95,22 @@ func (c *MCPClient) readMessage(ctx context.Context) (map[string]any, error) {
 	case res := <-ch:
 		return res.msg, res.err
 	}
+}
+
+func readMCPLine(reader interface{ ReadByte() (byte, error) }, maxBytes int) (string, error) {
+	var buf bytes.Buffer
+	for buf.Len() <= maxBytes {
+		b, err := reader.ReadByte()
+		if err != nil {
+			if buf.Len() > 0 {
+				return "", errf("MCP line is missing newline")
+			}
+			return "", err
+		}
+		buf.WriteByte(b)
+		if b == '\n' {
+			return buf.String(), nil
+		}
+	}
+	return "", errf("MCP line is too large; maximum is %d bytes", maxBytes)
 }

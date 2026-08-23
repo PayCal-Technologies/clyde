@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -27,6 +28,7 @@ const (
 
 var defaultExcludes = []string{
 	".git/**", ".hg/**", ".svn/**",
+	".clyde/**",
 	"node_modules/**", "vendor/**", "build/**", "dist/**", ".next/**",
 	".turbo/**", "DerivedData/**", "*.pyc", "*.pyo", "*.o", "*.a",
 	"*.so", "*.dylib", "*.dll", "*.exe", "*.zip", "*.tar", "*.gz",
@@ -45,6 +47,9 @@ var secretPatterns = []*regexp.Regexp{
 func ScanRepo(repo string, include, exclude []string, maxFileBytes int64) (ScanResult, error) {
 	if maxFileBytes <= 0 {
 		return ScanResult{}, errf("maxFileBytes must be greater than 0")
+	}
+	if err := validateGlobPatterns(append(append([]string{}, include...), exclude...)); err != nil {
+		return ScanResult{}, err
 	}
 	abs, err := filepath.Abs(repo)
 	if err != nil {
@@ -74,6 +79,10 @@ func ScanRepo(repo string, include, exclude []string, maxFileBytes int64) (ScanR
 			continue
 		}
 		rel = filepath.ToSlash(rel)
+		if err := validateRepoRelPath(rel); err != nil {
+			appendSkip(&result, rel, "invalid path string: "+err.Error())
+			continue
+		}
 		if len(include) > 0 && !matchesAny(rel, include) {
 			appendSkip(&result, rel, "not matched by include globs")
 			continue
@@ -114,6 +123,10 @@ func ScanRepo(repo string, include, exclude []string, maxFileBytes int64) (ScanR
 		}
 		if looksBinary(data) {
 			appendSkip(&result, rel, "binary file")
+			continue
+		}
+		if !utf8.Valid(data) {
+			appendSkip(&result, rel, "invalid UTF-8")
 			continue
 		}
 		text := string(data)
@@ -197,7 +210,8 @@ func gitListFiles(repo string) (string, bool) {
 
 func matchesAny(rel string, patterns []string) bool {
 	for _, pattern := range patterns {
-		if ok, _ := filepath.Match(pattern, rel); ok {
+		ok, err := filepath.Match(pattern, rel)
+		if err == nil && ok {
 			return true
 		}
 		if strings.HasSuffix(pattern, "/**") && strings.HasPrefix(rel, strings.TrimSuffix(pattern, "**")) {
@@ -205,6 +219,25 @@ func matchesAny(rel string, patterns []string) bool {
 		}
 	}
 	return false
+}
+
+func validateGlobPatterns(patterns []string) error {
+	for _, pattern := range patterns {
+		if strings.TrimSpace(pattern) == "" {
+			return errf("glob pattern must not be empty")
+		}
+		check := pattern
+		if strings.HasSuffix(pattern, "/**") {
+			check = strings.TrimSuffix(pattern, "/**")
+			if check == "" {
+				return errf("invalid glob pattern %q", pattern)
+			}
+		}
+		if _, err := filepath.Match(check, ""); err != nil {
+			return errf("invalid glob pattern %q: %v", pattern, err)
+		}
+	}
+	return nil
 }
 
 func looksBinary(data []byte) bool {

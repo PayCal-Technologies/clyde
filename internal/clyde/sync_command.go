@@ -125,6 +125,7 @@ func cmdSync(args []string, out, errOut io.Writer) error {
 		fmt.Fprintf(out, "Chunks: %d\n", bundle.Manifest.ChunkCount)
 		fmt.Fprintf(out, "Total bytes: %s\n", formatBytes(bundle.Manifest.TotalBytes))
 	} else {
+		addRepoPathExclude(fs.Arg(0), *receiptPath, &flags)
 		result, liveChunks, err := scanAndChunk(fs.Arg(0), flags, title)
 		if err != nil {
 			return err

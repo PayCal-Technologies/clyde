@@ -14,6 +14,7 @@ func (c *MCPClient) start(ctx context.Context, framing string) error {
 		return errf("empty MCP command")
 	}
 	cmd := exec.CommandContext(ctx, c.Command[0], c.Command[1:]...)
+	configureMCPCommand(cmd)
 	cmd.Env = mcpBaseEnv()
 	for key, value := range c.Env {
 		cmd.Env = append(cmd.Env, key+"="+value)
@@ -58,7 +59,7 @@ func (c *MCPClient) Close() error {
 	if c.cmd == nil || c.cmd.Process == nil {
 		return nil
 	}
-	_ = c.cmd.Process.Kill()
+	_ = killMCPProcess(c.cmd)
 	_, _ = c.cmd.Process.Wait()
 	return nil
 }

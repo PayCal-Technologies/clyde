@@ -24,6 +24,7 @@ type MCPClient struct {
 }
 
 const maxMCPFrameBytes = 16 * 1024 * 1024
+const maxMCPHeaderLineBytes = 8192
 
 func NewMCPClient(command []string, env map[string]string, timeout time.Duration) *MCPClient {
 	return &MCPClient{Command: command, Env: env, Timeout: timeout, nextID: 1, framing: "content-length"}

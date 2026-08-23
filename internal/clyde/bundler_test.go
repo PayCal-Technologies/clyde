@@ -92,14 +92,15 @@ func TestWriteBundleRecordsBookMetadata(t *testing.T) {
 
 func TestWriteBundleWritesChunkRecords(t *testing.T) {
 	dir := t.TempDir()
+	text := "package main\nfunc main() {}\n"
 	_, err := WriteBundle(ScanResult{
 		Repo: dir,
 		Files: []FileRecord{{
 			Path:   filepath.Join(dir, "app.go"),
 			Rel:    "app.go",
-			Size:   22,
-			SHA256: "abc123",
-			Text:   "package main\nfunc main() {}\n",
+			Size:   int64(len(text)),
+			SHA256: sha256HexString(text),
+			Text:   text,
 		}},
 	}, filepath.Join(dir, "out"), 100, "", "")
 	if err != nil {
@@ -139,14 +140,15 @@ func TestWriteBundleRejectsFileOutputPath(t *testing.T) {
 func TestLoadBundleVerifiesDigest(t *testing.T) {
 	dir := t.TempDir()
 	outDir := filepath.Join(dir, "out")
+	text := "package main\n"
 	manifest, err := WriteBundle(ScanResult{
 		Repo: dir,
 		Files: []FileRecord{{
 			Path:   filepath.Join(dir, "app.go"),
 			Rel:    "app.go",
-			Size:   13,
-			SHA256: "abc123",
-			Text:   "package main\n",
+			Size:   int64(len(text)),
+			SHA256: sha256HexString(text),
+			Text:   text,
 		}},
 	}, outDir, 100, "", "")
 	if err != nil {
@@ -171,6 +173,78 @@ func TestLoadBundleVerifiesDigest(t *testing.T) {
 	}
 	if _, err := LoadBundle(outDir); err == nil || !strings.Contains(err.Error(), "chunk count mismatch") {
 		t.Fatalf("expected verification error, got %v", err)
+	}
+}
+
+func TestVerifyBundleRejectsDuplicateChunkIndex(t *testing.T) {
+	text := "hello world\n"
+	chunk := ChunkRecord{
+		Path:       "a.txt",
+		SHA256:     sha256HexString(text),
+		ChunkIndex: 1,
+		ChunkTotal: 2,
+		Text:       "Path: a.txt\n\n" + text,
+	}
+	chunk.ChunkSHA256 = sha256HexString(chunk.Text)
+	bundle := Bundle{
+		Manifest: Manifest{
+			Schema:     "clyde.bundle.v1",
+			FileCount:  1,
+			ChunkCount: 2,
+			TotalBytes: int64(len(text) * 2),
+			Files: []manifestFile{{
+				Path:       "a.txt",
+				Size:       int64(len(text) * 2),
+				SHA256:     chunk.SHA256,
+				ChunkCount: 2,
+			}},
+			BundleSHA256: "sha256:test",
+		},
+		Chunks: []ChunkRecord{chunk, chunk},
+	}
+
+	err := verifyBundleStructure(bundle.Manifest, bundle.Chunks)
+
+	if err == nil || !strings.Contains(err.Error(), "duplicate chunk index") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestVerifyBundleRejectsManifestTotalBytesMismatch(t *testing.T) {
+	err := verifyBundleStructure(Manifest{
+		Schema:     "clyde.bundle.v1",
+		FileCount:  1,
+		ChunkCount: 0,
+		TotalBytes: 99,
+		Files: []manifestFile{{
+			Path:       "a.txt",
+			Size:       0,
+			SHA256:     sha256HexString(""),
+			ChunkCount: 0,
+		}},
+	}, nil)
+
+	if err == nil || !strings.Contains(err.Error(), "total bytes mismatch") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestVerifyBundleRejectsInvalidManifestPathString(t *testing.T) {
+	err := verifyBundleStructure(Manifest{
+		Schema:     "clyde.bundle.v1",
+		FileCount:  1,
+		ChunkCount: 0,
+		TotalBytes: 0,
+		Files: []manifestFile{{
+			Path:       "safe/\u202efile.go",
+			Size:       0,
+			SHA256:     sha256HexString(""),
+			ChunkCount: 0,
+		}},
+	}, nil)
+
+	if err == nil || !strings.Contains(err.Error(), "invalid file path") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -219,6 +293,23 @@ func TestWriteBundleRejectsSymlinkTargets(t *testing.T) {
 	_, err := WriteBundleWithOptions(ScanResult{Repo: dir}, outDir, 100, "", "", WriteBundleOptions{Force: true})
 	if err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("expected symlink refusal, got %v", err)
+	}
+}
+
+func TestMakeChunksWithLimitRejectsTooManyChunks(t *testing.T) {
+	result := ScanResult{
+		Repo: "/tmp/repo",
+		Files: []FileRecord{{
+			Rel:    "big.txt",
+			SHA256: "abc",
+			Text:   strings.Repeat("x", 256),
+		}},
+	}
+
+	_, err := MakeChunksWithLimit(result, 64, "", 1)
+
+	if err == nil || !strings.Contains(err.Error(), "chunk limit") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

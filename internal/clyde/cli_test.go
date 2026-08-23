@@ -190,16 +190,17 @@ func TestSyncDeleteExistingSourcesRequiresNLMBackend(t *testing.T) {
 
 func TestSyncBundleRequiresApprovedDigestMatch(t *testing.T) {
 	dir := t.TempDir()
-	mustWrite(t, filepath.Join(dir, "app.go"), "package main\n")
+	text := "package main\n"
+	mustWrite(t, filepath.Join(dir, "app.go"), text)
 	outDir := filepath.Join(dir, "out")
 	manifest, err := WriteBundle(ScanResult{
 		Repo: dir,
 		Files: []FileRecord{{
 			Path:   filepath.Join(dir, "app.go"),
 			Rel:    "app.go",
-			Size:   13,
-			SHA256: "abc123",
-			Text:   "package main\n",
+			Size:   int64(len(text)),
+			SHA256: sha256HexString(text),
+			Text:   text,
 		}},
 	}, outDir, 100, "", "")
 	if err != nil {
@@ -518,6 +519,78 @@ func TestCLIRejectsInvalidNumericFlags(t *testing.T) {
 				t.Fatalf("stderr missing %q: %s", tt.want, errOut.String())
 			}
 		})
+	}
+}
+
+func TestCLIRejectsTinyChunkSize(t *testing.T) {
+	var out, errOut bytes.Buffer
+	status := Main([]string{"preview", ".", "--max-chunk-chars", "1"}, &out, &errOut)
+
+	if status != 1 {
+		t.Fatalf("expected failure")
+	}
+	if !strings.Contains(errOut.String(), "max-chunk-chars") {
+		t.Fatalf("unexpected stderr: %s", errOut.String())
+	}
+}
+
+func TestCLIRejectsInvalidScanGlob(t *testing.T) {
+	var out, errOut bytes.Buffer
+	status := Main([]string{"preview", ".", "--include", "["}, &out, &errOut)
+
+	if status != 1 {
+		t.Fatalf("expected failure")
+	}
+	if !strings.Contains(errOut.String(), "invalid glob pattern") {
+		t.Fatalf("unexpected stderr: %s", errOut.String())
+	}
+}
+
+func TestAddRepoPathExcludeOnlyAddsInsideRepoPaths(t *testing.T) {
+	repo := t.TempDir()
+	flags := scanFlags{}
+
+	addRepoPathExclude(repo, filepath.Join(repo, "artifacts", "out"), &flags)
+	addRepoPathExclude(repo, filepath.Join(t.TempDir(), "outside"), &flags)
+
+	if len(flags.exclude) != 2 {
+		t.Fatalf("unexpected excludes: %#v", flags.exclude)
+	}
+	if flags.exclude[0] != "artifacts/out" || flags.exclude[1] != "artifacts/out/**" {
+		t.Fatalf("unexpected excludes: %#v", flags.exclude)
+	}
+}
+
+func TestShellFieldsPreservesQuotedArguments(t *testing.T) {
+	fields, err := shellFieldsE(`tool --source "/tmp/My Project" --name 'Clyde Review'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"tool", "--source", "/tmp/My Project", "--name", "Clyde Review"}
+	if strings.Join(fields, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("fields=%#v want %#v", fields, want)
+	}
+}
+
+func TestShellFieldsKeepsRepoTemplateAsSingleQuotedArgument(t *testing.T) {
+	fields, err := shellFieldsE(`scanner --source "{repo}"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := "/tmp/My Project"
+	for i, arg := range fields {
+		fields[i] = strings.ReplaceAll(arg, "{repo}", repo)
+	}
+	want := []string{"scanner", "--source", repo}
+	if strings.Join(fields, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("fields=%#v want %#v", fields, want)
+	}
+}
+
+func TestValidateCommandFlagRejectsUnterminatedQuote(t *testing.T) {
+	err := validateCommandFlag("secret-scan-command", `tool "unterminated`)
+	if err == nil || !strings.Contains(err.Error(), "unterminated quote") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

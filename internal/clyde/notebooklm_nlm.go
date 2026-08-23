@@ -37,11 +37,16 @@ func syncChunksNLM(ctx context.Context, chunks []ChunkRecord, opts SyncOptions, 
 		out, err := runCommand(ctx, command, []string{"source", "add", target, "--text", chunk.Text, "--title", title, "--json"}, opts.RequestTimeout)
 		if err != nil {
 			emitError(sink, opts.JobID, "failed", "failed uploading "+title, count, len(chunks), chunk.Path, err)
-			recordSyncReceiptChunk(opts, receipt, chunk, title, "", "failed", err)
+			if receiptErr := recordSyncReceiptChunk(opts, receipt, chunk, title, "", "failed", err); receiptErr != nil {
+				return count, receiptErr
+			}
 			return count, errf("failed uploading %s chunk %d/%d: %w", chunk.Path, chunk.ChunkIndex, chunk.ChunkTotal, err)
 		}
 		count++
-		recordSyncReceiptChunk(opts, receipt, chunk, title, sourceIDFromJSON(out), "uploaded", nil)
+		if err := recordSyncReceiptChunk(opts, receipt, chunk, title, sourceIDFromJSON(out), "uploaded", nil); err != nil {
+			emitError(sink, opts.JobID, "failed", "failed recording receipt for "+title, count, len(chunks), chunk.Path, err)
+			return count, err
+		}
 		emit(sink, opts.JobID, "uploaded", "uploaded "+title, count, len(chunks), chunk.Path)
 	}
 	emit(sink, opts.JobID, "complete", "uploaded "+itoa(int64(count))+" chunks", count, len(chunks), "")
@@ -49,6 +54,10 @@ func syncChunksNLM(ctx context.Context, chunks []ChunkRecord, opts SyncOptions, 
 }
 
 func deleteExistingNLMSources(ctx context.Context, command []string, target string, opts SyncOptions, receipt *SyncReceipt) error {
+	if receipt != nil && receipt.deletionCompleted() {
+		emit(opts.Progress, opts.JobID, "pruned", "existing NotebookLM sources already deleted for this receipt", 0, 0, "")
+		return nil
+	}
 	emit(opts.Progress, opts.JobID, "pruning", "listing existing NotebookLM sources", 0, 0, "")
 	out, err := runCommand(ctx, command, []string{"source", "list", target, "--json"}, opts.RequestTimeout)
 	if err != nil {
@@ -60,8 +69,11 @@ func deleteExistingNLMSources(ctx context.Context, command []string, target stri
 		return errf("nlm source list did not return JSON: %w", err)
 	}
 	if receipt != nil {
+		receipt.recordDeletionPhase("planned")
 		receipt.recordDeletions(sources, "planned")
-		_ = saveSyncReceipt(opts.ReceiptPath, *receipt)
+		if err := saveSyncReceipt(opts.ReceiptPath, *receipt); err != nil {
+			return err
+		}
 	}
 	var ids []string
 	for _, source := range sources {
@@ -70,6 +82,12 @@ func deleteExistingNLMSources(ctx context.Context, command []string, target stri
 		}
 	}
 	if len(ids) == 0 {
+		if receipt != nil {
+			receipt.recordDeletionPhase("completed")
+			if err := saveSyncReceipt(opts.ReceiptPath, *receipt); err != nil {
+				return err
+			}
+		}
 		emit(opts.Progress, opts.JobID, "pruned", "no existing NotebookLM sources to delete", 0, 0, "")
 		return nil
 	}
@@ -81,8 +99,11 @@ func deleteExistingNLMSources(ctx context.Context, command []string, target stri
 		return err
 	}
 	if receipt != nil {
+		receipt.recordDeletionPhase("completed")
 		receipt.recordDeletions(sources, "deleted")
-		_ = saveSyncReceipt(opts.ReceiptPath, *receipt)
+		if err := saveSyncReceipt(opts.ReceiptPath, *receipt); err != nil {
+			return err
+		}
 	}
 	emit(opts.Progress, opts.JobID, "pruned", "deleted "+itoa(int64(len(ids)))+" existing NotebookLM sources", len(ids), len(ids), "")
 	return nil
