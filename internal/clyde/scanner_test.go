@@ -121,6 +121,33 @@ func TestScanRepoFailsClosedWhenGitDiscoveryFails(t *testing.T) {
 	}
 }
 
+func TestScanRepoAllowsExplicitFilesystemFallback(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(dir, "app.go"), "package main\n")
+	t.Setenv("PATH", "")
+
+	result, err := ScanRepoWithOptions(dir, ScanOptions{
+		MaxFileBytes:            250000,
+		AllowFilesystemFallback: true,
+	})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Discovery.Method != "filesystem-fallback" || result.Discovery.GitExclusionsUsed {
+		t.Fatalf("unexpected discovery: %#v", result.Discovery)
+	}
+	if result.Discovery.GitError == "" {
+		t.Fatalf("expected recorded Git error: %#v", result.Discovery)
+	}
+	if len(result.Files) != 1 || result.Files[0].Rel != "app.go" {
+		t.Fatalf("unexpected files: %#v", result.Files)
+	}
+}
+
 func TestScanRepoRejectsFilePath(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "file.go")

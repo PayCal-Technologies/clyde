@@ -4,6 +4,19 @@
 
 - Nothing yet.
 
+## v0.2.8 - 2026-08-23
+
+- Add explicit `--allow-filesystem-fallback` scan flag for the rare case where a
+  Git repository should be scanned without Git-aware discovery. The default
+  remains fail-closed when Git discovery fails.
+- Bound raw filesystem candidate collection before sorting so non-Git traversal
+  stops at Clyde's path ceiling instead of collecting the whole tree.
+- When a remote chunk upload succeeds but the local uploaded receipt write fails,
+  attempt to persist the chunk as `ambiguous` and return an explicit
+  remote-success/local-failure error.
+- Record backend executable `--version` output when available and the MCP
+  environment contract in sync receipts.
+
 ## v0.2.7 - 2026-08-23
 
 - Fail closed when Git-aware repository discovery fails instead of falling back

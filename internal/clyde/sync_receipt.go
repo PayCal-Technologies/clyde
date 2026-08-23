@@ -1,11 +1,13 @@
 package clyde
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"os"
+	"io"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 )
@@ -31,7 +33,9 @@ type SyncBackendIdentity struct {
 	ResolvedPath     string   `json:"resolved_path,omitempty"`
 	ExecutableSHA256 string   `json:"executable_sha256,omitempty"`
 	Package          string   `json:"package,omitempty"`
+	Version          string   `json:"version,omitempty"`
 	Runtime          string   `json:"runtime,omitempty"`
+	EnvContract      []string `json:"env_contract,omitempty"`
 }
 
 type SyncReceiptChunk struct {
@@ -208,6 +212,12 @@ func syncBackendIdentity(opts SyncOptions) SyncBackendIdentity {
 		Command: append([]string{}, command...),
 		Runtime: runtime.GOOS + "/" + runtime.GOARCH,
 	}
+	if opts.Backend == "mcp" {
+		for key, value := range defaultMCPEnv {
+			identity.EnvContract = append(identity.EnvContract, key+"="+value)
+		}
+		sort.Strings(identity.EnvContract)
+	}
 	if len(command) == 0 {
 		return identity
 	}
@@ -215,6 +225,9 @@ func syncBackendIdentity(opts SyncOptions) SyncBackendIdentity {
 		identity.ResolvedPath = path
 		if digest, err := fileSHA256(path); err == nil {
 			identity.ExecutableSHA256 = digest
+		}
+		if version, err := commandVersion(path); err == nil {
+			identity.Version = version
 		}
 	}
 	identity.Package = backendPackage(command)
@@ -247,10 +260,36 @@ func backendPackage(command []string) string {
 }
 
 func fileSHA256(path string) (string, error) {
-	data, err := os.ReadFile(path)
+	data, err := readRegularFileLimited(path, 128*1024*1024)
 	if err != nil {
 		return "", err
 	}
 	sum := sha256.Sum256(data)
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func commandVersion(path string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, "--version")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", err
+	}
+	cmd.Stderr = cmd.Stdout
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+	data, readErr := io.ReadAll(io.LimitReader(stdout, 4096))
+	waitErr := cmd.Wait()
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	if readErr != nil {
+		return "", readErr
+	}
+	if waitErr != nil {
+		return "", waitErr
+	}
+	return strings.TrimSpace(string(data)), nil
 }

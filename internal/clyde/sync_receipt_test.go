@@ -70,6 +70,9 @@ func TestSyncReceiptRecordsBackendIdentity(t *testing.T) {
 	if receipt.BackendIdentity.Runtime == "" {
 		t.Fatalf("missing runtime identity: %#v", receipt.BackendIdentity)
 	}
+	if !slices.Contains(receipt.BackendIdentity.EnvContract, "NOTEBOOKLM_TRANSPORT=stdio") {
+		t.Fatalf("missing MCP environment contract: %#v", receipt.BackendIdentity)
+	}
 }
 
 func TestSyncReceiptResumeBindsBackendCommandWhenRecorded(t *testing.T) {
@@ -103,6 +106,23 @@ func TestRecordSyncReceiptChunkReturnsPersistenceError(t *testing.T) {
 
 	if err == nil {
 		t.Fatal("expected receipt persistence error")
+	}
+}
+
+func TestRecordUploadedSyncReceiptChunkMarksAmbiguousAfterUploadedSaveFailure(t *testing.T) {
+	dir := t.TempDir()
+	opts := SyncOptions{NotebookID: "nb", Backend: "mcp", ReceiptPath: dir}
+	receipt := newSyncReceipt(opts)
+	chunk := ChunkRecord{Path: "app.go", SHA256: "file", ChunkIndex: 1, ChunkTotal: 1, ChunkSHA256: "chunk"}
+	title := "app.go [1/1]"
+
+	err := recordUploadedSyncReceiptChunk(opts, &receipt, chunk, title, "src-1")
+
+	if err == nil || !strings.Contains(err.Error(), "remote upload succeeded") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status, ok := receipt.chunkStatus(chunk, title); !ok || status != "ambiguous" {
+		t.Fatalf("expected in-memory ambiguous status, got status=%q ok=%v receipt=%#v", status, ok, receipt.Chunks)
 	}
 }
 

@@ -42,10 +42,11 @@ func cmdSync(args []string, out, errOut io.Writer) error {
 	fs.Float64("heartbeat-interval", 1, "accepted for compatibility; progress events emit per phase")
 	addScanFlags(fs, &flags)
 	boolFlags := map[string]bool{
-		"approve-upload":          true,
-		"delete-existing-sources": true,
-		"quiet-progress":          true,
-		"resume":                  true,
+		"approve-upload":            true,
+		"delete-existing-sources":   true,
+		"quiet-progress":            true,
+		"resume":                    true,
+		"allow-filesystem-fallback": true,
 	}
 	if err := fs.Parse(interspersedArgs(args, boolFlags)); err != nil {
 		return err

@@ -72,3 +72,15 @@ func recordSyncReceiptChunk(opts SyncOptions, receipt *SyncReceipt, chunk ChunkR
 	receipt.recordChunk(chunk, title, sourceID, status, err)
 	return saveSyncReceipt(opts.ReceiptPath, *receipt)
 }
+
+func recordUploadedSyncReceiptChunk(opts SyncOptions, receipt *SyncReceipt, chunk ChunkRecord, title, sourceID string) error {
+	err := recordSyncReceiptChunk(opts, receipt, chunk, title, sourceID, "uploaded", nil)
+	if err == nil || receipt == nil || opts.ReceiptPath == "" {
+		return err
+	}
+	ambiguousErr := errf("remote upload succeeded but local receipt save failed: %v", err)
+	if saveErr := recordSyncReceiptChunk(opts, receipt, chunk, title, sourceID, "ambiguous", ambiguousErr); saveErr != nil {
+		return errf("remote upload succeeded but local receipt is ambiguous and could not be saved: uploaded_save=%v ambiguous_save=%v", err, saveErr)
+	}
+	return ambiguousErr
+}

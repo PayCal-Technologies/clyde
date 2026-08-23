@@ -35,7 +35,7 @@ func cmdBundle(args []string, out io.Writer) error {
 	requireSecretScan := fs.Bool("require-secret-scan", false, "fail unless --secret-scan-command completes successfully")
 	secretScanCommand := fs.String("secret-scan-command", "", "external secret scanner command; {repo} expands to the repository path")
 	addScanFlags(fs, &flags)
-	if err := fs.Parse(interspersedArgs(args, map[string]bool{"force": true, "require-secret-scan": true})); err != nil {
+	if err := fs.Parse(interspersedArgs(args, map[string]bool{"force": true, "require-secret-scan": true, "allow-filesystem-fallback": true})); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {

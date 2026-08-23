@@ -150,7 +150,7 @@ func cmdAgent(args []string, stdin io.Reader, out io.Writer) error {
 	readStdin := fs.Bool("stdin", false, "read feedback prompt from stdin")
 	allowRemote := fs.Bool("allow-remote-ollama", false, "allow sending scanned source context to a non-local Ollama URL")
 	addScanFlags(fs, &flags)
-	boolFlags := map[string]bool{"no-stream": true, "stdin": true, "allow-remote-ollama": true}
+	boolFlags := map[string]bool{"no-stream": true, "stdin": true, "allow-remote-ollama": true, "allow-filesystem-fallback": true}
 	if err := fs.Parse(interspersedArgs(args, boolFlags)); err != nil {
 		return err
 	}

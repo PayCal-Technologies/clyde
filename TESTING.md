@@ -67,7 +67,7 @@ All tests currently live under `internal/clyde`.
 | `path_strings_test.go` | Suspicious Unicode, NUL, absolute, parent, and Windows-style path string rejection. |
 | `scanner_test.go` | Repository scanning, secret skips, include/exclude behavior, invalid paths, invalid size limits, symlink skipping. |
 | `scan_report_test.go` | Scan report sorting, counts, and top-file behavior. |
-| `sync_receipt_test.go` | Receipt matching, resume safety, destructive deletion inventories, and private receipt writes. |
+| `sync_receipt_test.go` | Receipt matching, resume safety, destructive deletion inventories, ambiguous upload states, backend identity, and private receipt writes. |
 | `status_test.go` | Status store formatting and recorded events. |
 | `catalog_test.go` | Command catalog alignment with command registration and help output. |
 | `tui_test.go` | TUI model index behavior. |
@@ -138,6 +138,8 @@ Covered behavior:
 - likely secret files are skipped;
 - caller-provided excludes are respected;
 - symlinks are skipped;
+- Git repositories fail closed when Git-aware discovery fails unless
+  `--allow-filesystem-fallback` is explicit;
 - non-directory repo paths are rejected;
 - invalid file-size limits are rejected;
 - include globs may match no files without crashing.

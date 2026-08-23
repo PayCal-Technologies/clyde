@@ -9,7 +9,7 @@
 Clyde is a small Go MCP-client harness for moving auditable repository source bundles
 into Google NotebookLM.
 
-Current version: `0.2.7`
+Current version: `0.2.8`
 
 Official resources:
 
@@ -83,13 +83,13 @@ Use this procedure for every Clyde release and performance pass:
 ## Install From Source
 
 ```bash
-go install github.com/PayCal-Technologies/clyde/cmd/clyde@v0.2.7
+go install github.com/PayCal-Technologies/clyde/cmd/clyde@v0.2.8
 ```
 
 Windows from source in PowerShell:
 
 ```powershell
-go install github.com/PayCal-Technologies/clyde/cmd/clyde@v0.2.7
+go install github.com/PayCal-Technologies/clyde/cmd/clyde@v0.2.8
 clyde --about
 ```
 
@@ -246,6 +246,12 @@ Machine-readable preview:
 clyde preview /path/to/repo --json
 ```
 
+In Git repositories, Clyde uses `git ls-files -co --exclude-standard` so
+`.gitignore` and standard Git exclusions are honored. If Git discovery fails,
+Clyde stops instead of falling back to a raw filesystem walk. Use
+`--allow-filesystem-fallback` only when you intentionally accept that `.gitignore`
+may not be honored.
+
 Create a local bundle:
 
 ```bash
@@ -365,10 +371,13 @@ clyde sync --bundle .clyde/out \
 the overall bundle digest before upload. This is the auditable source-transfer
 path: the digest you approve is bound to the exact chunk content Clyde sends.
 Bundle sync writes `.clyde/out/sync-receipt.json` by default. The receipt records
-the bundle digest, destination, backend identity, chunk digests, returned source
-IDs where available, upload status, timestamps, and failure state. Clyde records
-each chunk as `pending` before upload and refuses automatic resume of pending or
-ambiguous chunks; reconcile the remote source before retrying with a new receipt.
+the bundle digest, destination, backend command, resolved executable, executable
+digest when readable, backend version when available, runtime/environment
+contract, chunk digests, returned source IDs where available, upload status,
+timestamps, and failure state. Clyde records each chunk as `pending` before
+upload. If the remote upload succeeds but the local uploaded receipt write fails,
+Clyde attempts to mark the chunk `ambiguous` and refuses automatic resume until
+the remote source is reconciled or a new receipt is deliberately started.
 
 Resume a partially completed bundle sync:
 
@@ -459,6 +468,7 @@ Clyde also applies several guardrails before data leaves the local machine:
 - `agent` refuses non-local Ollama URLs unless `--allow-remote-ollama` is set.
 - Git repositories fail closed if Git-aware discovery fails; Clyde does not
   silently fall back to a raw filesystem walk that ignores `.gitignore`.
+  `--allow-filesystem-fallback` makes that fallback explicit.
 - Repo scans skip symlinks, non-regular files, binary files, likely secrets,
   dependency/build folders, and files larger than `max_file_bytes`.
 - Clyde rejects symlinked parent directories for config, bundle, and receipt

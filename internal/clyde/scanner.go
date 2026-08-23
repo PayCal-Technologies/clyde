@@ -45,10 +45,14 @@ var secretPatterns = []*regexp.Regexp{
 }
 
 func ScanRepo(repo string, include, exclude []string, maxFileBytes int64) (ScanResult, error) {
-	if maxFileBytes <= 0 {
+	return ScanRepoWithOptions(repo, ScanOptions{Include: include, Exclude: exclude, MaxFileBytes: maxFileBytes})
+}
+
+func ScanRepoWithOptions(repo string, opts ScanOptions) (ScanResult, error) {
+	if opts.MaxFileBytes <= 0 {
 		return ScanResult{}, errf("maxFileBytes must be greater than 0")
 	}
-	if err := validateGlobPatterns(append(append([]string{}, include...), exclude...)); err != nil {
+	if err := validateGlobPatterns(append(append([]string{}, opts.Include...), opts.Exclude...)); err != nil {
 		return ScanResult{}, err
 	}
 	abs, err := filepath.Abs(repo)
@@ -61,14 +65,14 @@ func ScanRepo(repo string, include, exclude []string, maxFileBytes int64) (ScanR
 	}
 
 	result := ScanResult{Repo: abs}
-	candidates, discovery, err := candidatePaths(abs)
+	candidates, discovery, err := candidatePaths(abs, opts.AllowFilesystemFallback)
 	if err != nil {
 		return ScanResult{}, err
 	}
 	result.Discovery = discovery
-	excludes := make([]string, 0, len(defaultExcludes)+len(exclude))
+	excludes := make([]string, 0, len(defaultExcludes)+len(opts.Exclude))
 	excludes = append(excludes, defaultExcludes...)
-	excludes = append(excludes, exclude...)
+	excludes = append(excludes, opts.Exclude...)
 	for i, path := range candidates {
 		if i >= maxScannedPaths {
 			appendSkip(&result, "...", "scan stopped after "+itoa(maxScannedPaths)+" paths")
@@ -87,7 +91,7 @@ func ScanRepo(repo string, include, exclude []string, maxFileBytes int64) (ScanR
 			appendSkip(&result, rel, "invalid path string: "+err.Error())
 			continue
 		}
-		if len(include) > 0 && !matchesAny(rel, include) {
+		if len(opts.Include) > 0 && !matchesAny(rel, opts.Include) {
 			appendSkip(&result, rel, "not matched by include globs")
 			continue
 		}
@@ -108,15 +112,15 @@ func ScanRepo(repo string, include, exclude []string, maxFileBytes int64) (ScanR
 			appendSkip(&result, rel, "not a regular file")
 			continue
 		}
-		if stat.Size() > maxFileBytes {
-			appendSkip(&result, rel, "larger than "+itoa(maxFileBytes)+" bytes")
+		if stat.Size() > opts.MaxFileBytes {
+			appendSkip(&result, rel, "larger than "+itoa(opts.MaxFileBytes)+" bytes")
 			continue
 		}
 		if len(result.Files) >= maxIncludedFiles {
 			appendSkip(&result, rel, "included file limit reached")
 			continue
 		}
-		data, openedStat, err := readScannedFile(path, stat, maxFileBytes)
+		data, openedStat, err := readScannedFile(path, stat, opts.MaxFileBytes)
 		if err != nil {
 			appendSkip(&result, rel, "read failed: "+err.Error())
 			continue
@@ -157,7 +161,7 @@ func appendSkip(result *ScanResult, path, reason string) {
 	result.Skips = append(result.Skips, SkipRecord{Path: path, Reason: reason})
 }
 
-func candidatePaths(repo string) ([]string, ScanDiscovery, error) {
+func candidatePaths(repo string, allowFilesystemFallback bool) ([]string, ScanDiscovery, error) {
 	if _, err := os.Stat(filepath.Join(repo, ".git")); err == nil {
 		out, gitErr := gitListFiles(repo)
 		discovery := ScanDiscovery{
@@ -168,7 +172,16 @@ func candidatePaths(repo string) ([]string, ScanDiscovery, error) {
 		}
 		if gitErr != nil {
 			discovery.GitError = gitErr.Error()
-			return nil, discovery, errf("git-aware file discovery failed; refusing filesystem fallback in Git repository: %w", gitErr)
+			if !allowFilesystemFallback {
+				return nil, discovery, errf("git-aware file discovery failed; refusing filesystem fallback in Git repository: %w", gitErr)
+			}
+			paths, walkErr := filesystemCandidatePaths(repo)
+			if walkErr != nil {
+				return nil, discovery, walkErr
+			}
+			discovery.Method = "filesystem-fallback"
+			discovery.GitExclusionsUsed = false
+			return paths, discovery, nil
 		}
 		paths := make([]string, 0, strings.Count(out, "\n"))
 		for _, line := range strings.Split(out, "\n") {
@@ -178,8 +191,16 @@ func candidatePaths(repo string) ([]string, ScanDiscovery, error) {
 		}
 		return paths, discovery, nil
 	}
-	var paths []string
-	_ = filepath.WalkDir(repo, func(path string, d fs.DirEntry, err error) error {
+	paths, err := filesystemCandidatePaths(repo)
+	if err != nil {
+		return nil, ScanDiscovery{Method: "filesystem", GitExclusionsUsed: false}, err
+	}
+	return paths, ScanDiscovery{Method: "filesystem", GitExclusionsUsed: false}, nil
+}
+
+func filesystemCandidatePaths(repo string) ([]string, error) {
+	paths := make([]string, 0, min(maxScannedPaths, 4096))
+	err := filepath.WalkDir(repo, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -191,13 +212,13 @@ func candidatePaths(repo string) ([]string, ScanDiscovery, error) {
 			return nil
 		}
 		paths = append(paths, path)
-		if len(paths) > maxScannedPaths {
+		if len(paths) >= maxScannedPaths {
 			return filepath.SkipAll
 		}
 		return nil
 	})
 	sort.Strings(paths)
-	return paths, ScanDiscovery{Method: "filesystem", GitExclusionsUsed: false}, nil
+	return paths, err
 }
 
 func gitListFiles(repo string) (string, error) {

@@ -16,6 +16,7 @@ type scanFlags struct {
 	exclude       multiFlag
 	maxFileBytes  int64
 	maxChunkChars int
+	allowFallback bool
 }
 
 func addScanFlags(fs *flag.FlagSet, flags *scanFlags) {
@@ -23,10 +24,16 @@ func addScanFlags(fs *flag.FlagSet, flags *scanFlags) {
 	fs.Var(&flags.exclude, "exclude", "skip paths matching this glob in addition to Clyde defaults; repeatable")
 	fs.Int64Var(&flags.maxFileBytes, "max-file-bytes", flags.maxFileBytes, "skip files larger than this many bytes")
 	fs.IntVar(&flags.maxChunkChars, "max-chunk-chars", flags.maxChunkChars, "split uploaded source text at this many characters")
+	fs.BoolVar(&flags.allowFallback, "allow-filesystem-fallback", flags.allowFallback, "when Git discovery fails in a Git repository, deliberately fall back to raw filesystem traversal")
 }
 
 func scanAndChunk(repo string, flags scanFlags, bookTitle string) (ScanResult, []ChunkRecord, error) {
-	result, err := ScanRepo(repo, flags.include, flags.exclude, flags.maxFileBytes)
+	result, err := ScanRepoWithOptions(repo, ScanOptions{
+		Include:                 flags.include,
+		Exclude:                 flags.exclude,
+		MaxFileBytes:            flags.maxFileBytes,
+		AllowFilesystemFallback: flags.allowFallback,
+	})
 	if err != nil {
 		return ScanResult{}, nil, err
 	}

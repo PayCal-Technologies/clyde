@@ -20,6 +20,13 @@ type ScanResult struct {
 	Skips     []SkipRecord
 }
 
+type ScanOptions struct {
+	Include                 []string
+	Exclude                 []string
+	MaxFileBytes            int64
+	AllowFilesystemFallback bool
+}
+
 type ScanDiscovery struct {
 	Method            string
 	GitExclusionsUsed bool

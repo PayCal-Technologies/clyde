@@ -79,7 +79,7 @@ func syncChunksMCP(ctx context.Context, chunks []ChunkRecord, opts SyncOptions, 
 			return count, errf("failed uploading %s chunk %d/%d: %w", chunk.Path, chunk.ChunkIndex, chunk.ChunkTotal, err)
 		}
 		count++
-		if err := recordSyncReceiptChunk(opts, receipt, chunk, title, sourceIDFromAny(result), "uploaded", nil); err != nil {
+		if err := recordUploadedSyncReceiptChunk(opts, receipt, chunk, title, sourceIDFromAny(result)); err != nil {
 			emitError(sink, opts.JobID, "failed", "failed recording receipt for "+title, count, len(chunks), chunk.Path, err)
 			return count, err
 		}

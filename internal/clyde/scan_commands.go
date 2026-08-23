@@ -23,7 +23,7 @@ func cmdPreview(args []string, out io.Writer) error {
 	showSkips := fs.Int("show-skips", 50, "show first N skipped files")
 	jsonOut := fs.Bool("json", false, "print machine-readable JSON summary")
 	addScanFlags(fs, &flags)
-	if err := fs.Parse(interspersedArgs(args, map[string]bool{"json": true})); err != nil {
+	if err := fs.Parse(interspersedArgs(args, map[string]bool{"json": true, "allow-filesystem-fallback": true})); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -79,7 +79,7 @@ func cmdScanReport(args []string, out io.Writer) error {
 	jsonOut := fs.Bool("json", false, "print machine-readable scan report")
 	top := fs.Int("top", 10, "number of largest files to include")
 	addScanFlags(fs, &flags)
-	if err := fs.Parse(interspersedArgs(args, map[string]bool{"json": true})); err != nil {
+	if err := fs.Parse(interspersedArgs(args, map[string]bool{"json": true, "allow-filesystem-fallback": true})); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
