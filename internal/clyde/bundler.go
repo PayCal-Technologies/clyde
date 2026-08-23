@@ -138,18 +138,18 @@ func WriteBundleWithOptions(result ScanResult, outDir string, maxChunkChars int,
 		manifest.Files = append(manifest.Files, manifestFile{Path: file.Rel, Size: file.Size, SHA256: file.SHA256, ChunkCount: chunksByFile[file.Rel]})
 	}
 	for _, skip := range result.Skips {
-		manifest.Skips = append(manifest.Skips, manifestSkip{Path: skip.Path, Reason: skip.Reason})
+		manifest.Skips = append(manifest.Skips, manifestSkip(skip))
 	}
 	chunkData, err := encodeChunks(chunks)
 	if err != nil {
 		return Manifest{}, err
 	}
-	digest, data, err := bundleDigestAndManifest(manifest, chunkData)
+	digest, _, err := bundleDigestAndManifest(manifest, chunkData)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("encode bundle manifest: %w", err)
 	}
 	manifest.BundleSHA256 = digest
-	data, err = json.MarshalIndent(manifest, "", "  ")
+	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return Manifest{}, fmt.Errorf("encode bundle manifest: %w", err)
 	}

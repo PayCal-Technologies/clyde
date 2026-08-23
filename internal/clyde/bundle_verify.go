@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"strings"
 )
 
@@ -171,25 +170,6 @@ func encodeChunks(chunks []ChunkRecord) ([]byte, error) {
 		return nil, fmt.Errorf("flush bundle chunks: %w", err)
 	}
 	return buf.Bytes(), nil
-}
-
-func decodeChunks(data []byte) ([]ChunkRecord, error) {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	var chunks []ChunkRecord
-	for {
-		if len(chunks) >= maxGeneratedChunks {
-			return nil, errf("bundle chunk limit exceeded; maximum is %d", maxGeneratedChunks)
-		}
-		var chunk ChunkRecord
-		if err := decoder.Decode(&chunk); err != nil {
-			if err == io.EOF {
-				break
-			}
-			return nil, err
-		}
-		chunks = append(chunks, chunk)
-	}
-	return chunks, nil
 }
 
 func readFileLimited(path string, maxBytes int64) ([]byte, error) {
