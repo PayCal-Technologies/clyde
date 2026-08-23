@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Nothing yet.
+
+## v0.2.6 - 2026-08-23
+
 - Bind reviewed bundles to uploaded content with per-chunk digests, an overall
   bundle digest, `clyde bundle verify`, and `sync --bundle --approve-digest`.
 - Write bundle artifacts and sync receipts with private atomic filesystem
@@ -15,6 +19,14 @@
 - Expand CI to gofmt, tests, race tests, vet, builds, CLI smoke, fuzz smoke,
   staticcheck, and govulncheck; add tag-driven release archives, checksums,
   SBOM, and provenance attestations.
+- Split oversized internal domains for bundle, sync, MCP, status, receipt, and
+  subprocess handling into smaller files while preserving the public CLI.
+- Centralize top-level command dispatch, command metadata, and completion shell
+  dispatch behind typed registries with drift tests.
+- Harden scanner file reads by verifying opened-file identity and size around
+  bounded reads before accepting source content.
+- Harden config initialization with private atomic writes, `0700` config
+  directories, and refusal to overwrite existing files or symlinks.
 
 ## v0.2.5 - 2026-08-22
 
