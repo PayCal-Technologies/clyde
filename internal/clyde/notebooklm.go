@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -198,71 +197,6 @@ func deleteExistingNLMSources(ctx context.Context, command []string, target stri
 	}
 	emit(opts.Progress, opts.JobID, "pruned", "deleted "+itoa(int64(len(ids)))+" existing NotebookLM sources", len(ids), len(ids), "")
 	return nil
-}
-
-func prepareSyncReceipt(opts SyncOptions) (*SyncReceipt, error) {
-	if opts.ReceiptPath == "" {
-		return nil, nil
-	}
-	if opts.Backend == "" {
-		opts.Backend = "mcp"
-	}
-	if opts.Resume {
-		receipt, err := loadSyncReceipt(opts.ReceiptPath)
-		if err == nil {
-			if !receipt.canResume(opts) {
-				return nil, errf("sync receipt does not match requested transfer")
-			}
-			return &receipt, nil
-		}
-		if !os.IsNotExist(err) {
-			return nil, err
-		}
-	}
-	receipt := newSyncReceipt(opts)
-	if err := saveSyncReceipt(opts.ReceiptPath, receipt); err != nil {
-		return nil, err
-	}
-	return &receipt, nil
-}
-
-func recordSyncReceiptChunk(opts SyncOptions, receipt *SyncReceipt, chunk ChunkRecord, title, sourceID, status string, err error) {
-	if receipt == nil || opts.ReceiptPath == "" {
-		return
-	}
-	receipt.recordChunk(chunk, title, sourceID, status, err)
-	_ = saveSyncReceipt(opts.ReceiptPath, *receipt)
-}
-
-func sourceIDFromJSON(data []byte) string {
-	var value any
-	if err := json.Unmarshal(data, &value); err != nil {
-		return ""
-	}
-	return sourceIDFromAny(value)
-}
-
-func sourceIDFromAny(value any) string {
-	switch v := value.(type) {
-	case map[string]any:
-		for _, key := range []string{"source_id", "sourceId", "id"} {
-			if id, ok := v[key].(string); ok && id != "" {
-				return id
-			}
-		}
-		for _, nested := range v {
-			if id := sourceIDFromAny(nested); id != "" {
-				return id
-			}
-		}
-	case []any:
-		for _, nested := range v {
-			if id := sourceIDFromAny(nested); id != "" {
-				return id
-			}
-		}
-	}
-	return ""
 }
 
 func toolAvailable(tools map[string]any, name string) bool {
