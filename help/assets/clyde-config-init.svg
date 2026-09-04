@@ -17,15 +17,16 @@
     <text x="34" y="282" fill="#eaf6ff">  &quot;ollama_url&quot;: &quot;http://127.0.0.1:11434&quot;,</text>
     <text x="34" y="316" fill="#eaf6ff">  &quot;model&quot;: &quot;qwen2.5-coder:7b&quot;,</text>
     <text x="34" y="350" fill="#eaf6ff">  &quot;num_ctx&quot;: 8192,</text>
-    <text x="34" y="384" fill="#eaf6ff">  &quot;max_file_bytes&quot;: 262144,</text>
-    <text x="34" y="418" fill="#eaf6ff">  &quot;max_chunk_chars&quot;: 12000,</text>
-    <text x="34" y="452" fill="#eaf6ff">  &quot;default_excludes&quot;: [&quot;.git&quot;, &quot;node_modules&quot;, &quot;vendor&quot;],</text>
-    <text x="34" y="486" fill="#eaf6ff">  &quot;redact_secrets&quot;: true</text>
-    <text x="34" y="520" fill="#9ab2c5">}</text>
-    <text x="34" y="588" fill="#57b3ff">Next</text>
-    <text x="168" y="588" fill="#eaf6ff">clyde doctor .</text>
-    <text x="34" y="622" fill="#9ab2c5">Tip</text>
-    <text x="168" y="622" fill="#eaf6ff">use CLYDE_CONFIG to point at a project-specific config</text>
+    <text x="34" y="384" fill="#eaf6ff">  &quot;ask_timeout_seconds&quot;: 120,</text>
+    <text x="34" y="418" fill="#eaf6ff">  &quot;agent_timeout_seconds&quot;: 180,</text>
+    <text x="34" y="452" fill="#eaf6ff">  &quot;max_context_chars&quot;: 16000,</text>
+    <text x="34" y="486" fill="#eaf6ff">  &quot;max_file_bytes&quot;: 250000,</text>
+    <text x="34" y="520" fill="#eaf6ff">  &quot;max_chunk_chars&quot;: 18000</text>
+    <text x="34" y="554" fill="#9ab2c5">}</text>
+    <text x="34" y="622" fill="#57b3ff">Next</text>
+    <text x="168" y="622" fill="#eaf6ff">clyde doctor .</text>
+    <text x="34" y="656" fill="#9ab2c5">Tip</text>
+    <text x="168" y="656" fill="#eaf6ff">use CLYDE_CONFIG to point at a project-specific config</text>
   </g>
   <rect x="0" y="0" width="1292" height="812" rx="28" fill="none" stroke="#9dcced" stroke-opacity="0.68"/>
 </svg>

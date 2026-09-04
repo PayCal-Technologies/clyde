@@ -26,6 +26,9 @@ func printSummary(out io.Writer, result ScanResult, chunkCount int, flags scanFl
 	if len(flags.exclude) > 0 {
 		fmt.Fprintf(out, "Extra exclude globs: %s\n", strings.Join(flags.exclude, ", "))
 	}
+	if len(flags.excludeFolder) > 0 {
+		fmt.Fprintf(out, "Extra exclude folders: %s\n", strings.Join(flags.excludeFolder, ", "))
+	}
 	if len(result.Skips) > 0 {
 		counts := map[string]int{}
 		for _, skip := range result.Skips {
@@ -61,6 +64,7 @@ func printPreviewJSON(out io.Writer, result ScanResult, chunkCount int, flags sc
 		"max_chunk_chars": flags.maxChunkChars,
 		"include":         []string(flags.include),
 		"exclude":         []string(flags.exclude),
+		"exclude_folders": []string(flags.excludeFolder),
 		"files":           files,
 		"skips":           skips,
 	}, "", "  ")

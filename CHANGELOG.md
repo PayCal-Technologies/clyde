@@ -1,8 +1,36 @@
 # Changelog
 
-## Unreleased
+## v1.0.0 - 2026-09-04
 
-- Nothing yet.
+- Add repeatable `--exclude-folder` scanning controls and optional
+  `exclude_folders` configuration while keeping generated default configuration
+  behavior-only.
+- Add `sync --dry-run` to verify local input and the selected backend, show the
+  planned upload/deletion set, and make no remote or receipt changes.
+- Add `clyde receipt status` for read-only sync receipt summaries and safe
+  resume guidance, including a verified bundle resume command when available.
+- Emit immediate sync phases and periodic progress heartbeats during long local
+  preparation and backend operations, with status-daemon support.
+
+- Detect Git worktrees from any supplied subdirectory and run Git-aware
+  discovery from the worktree root while filtering results back to the requested
+  directory.
+- Fail closed when raw filesystem discovery hits Clyde's path ceiling, instead
+  of producing a silently truncated bundle.
+- Wire `bundle --allow-filesystem-fallback` through the options-aware scanner.
+- Publish bundles through a verified temporary directory swap so `--force`
+  cannot leave mixed old/new bundle files behind.
+- Recompute secret-scan target evidence during bundle verification.
+- Reconcile planned destructive NLM deletions against current remote source IDs
+  before retrying and mark already-missing planned IDs as deleted.
+- Require recorded backend path, executable digest, package, and MCP
+  environment identity to match before resuming a sync receipt.
+- Harden release publishing by refusing existing releases, staging uploads as a
+  draft, comparing remote checksums to local checksums, generating
+  Sigstore-signed SLSA provenance, publishing only after verification, and
+  removing the checkout token remote.
+- Verify downloaded Go bootstrap archives against Go's published SHA-256 files
+  before extraction.
 
 ## v0.2.8 - 2026-08-23
 

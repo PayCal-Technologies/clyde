@@ -53,6 +53,7 @@ type manifestDiscovery struct {
 	GitError          string `json:"git_error,omitempty"`
 	GitCommit         string `json:"git_commit,omitempty"`
 	GitWorkingTree    string `json:"git_working_tree,omitempty"`
+	Truncated         bool   `json:"truncated,omitempty"`
 }
 
 type manifestScan struct {
@@ -84,8 +85,20 @@ func WriteBundleWithOptions(result ScanResult, outDir string, maxChunkChars int,
 	if info, err := os.Lstat(outDir); err == nil && !info.IsDir() {
 		return Manifest{}, errf("out dir must be a directory, not a file: %s", outDir)
 	}
-	if err := preparePrivateDir(outDir); err != nil {
-		return Manifest{}, fmt.Errorf("create bundle output directory %s: %w", outDir, err)
+	parent := filepath.Dir(outDir)
+	if err := preparePrivateDir(parent); err != nil {
+		return Manifest{}, fmt.Errorf("create bundle parent directory %s: %w", parent, err)
+	}
+	if err := refuseSymlinkPathComponents(outDir, true); err != nil && !os.IsNotExist(err) {
+		return Manifest{}, err
+	}
+	if info, err := os.Lstat(outDir); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return Manifest{}, errf("refusing symlink bundle directory: %s", outDir)
+		}
+		if !info.IsDir() {
+			return Manifest{}, errf("out dir must be a directory, not a file: %s", outDir)
+		}
 	}
 	chunks, err := MakeChunksWithLimit(result, maxChunkChars, bookTitle, maxGeneratedChunks)
 	if err != nil {
@@ -103,6 +116,7 @@ func WriteBundleWithOptions(result ScanResult, outDir string, maxChunkChars int,
 			GitError:          result.Discovery.GitError,
 			GitCommit:         result.Discovery.GitCommit,
 			GitWorkingTree:    result.Discovery.GitWorkingTree,
+			Truncated:         result.Discovery.Truncated,
 		},
 		HeuristicOnly: true,
 		FileCount:     len(result.Files),
@@ -161,14 +175,65 @@ func WriteBundleWithOptions(result ScanResult, outDir string, maxChunkChars int,
 	if err := refuseUnsafeBundleTarget(chunksPath, opts.Force); err != nil {
 		return Manifest{}, err
 	}
-	if err := writePrivateAtomic(manifestPath, append(data, '\n')); err != nil {
-		return Manifest{}, fmt.Errorf("write bundle manifest %s: %w", manifestPath, err)
-	}
-	if err := writePrivateAtomic(chunksPath, chunkData); err != nil {
-		_ = os.Remove(manifestPath)
-		return Manifest{}, fmt.Errorf("write bundle chunks %s: %w", chunksPath, err)
+	if err := publishBundleDirectory(outDir, append(data, '\n'), chunkData, opts.Force); err != nil {
+		return Manifest{}, err
 	}
 	return manifest, nil
+}
+
+func publishBundleDirectory(outDir string, manifestData, chunkData []byte, force bool) error {
+	parent := filepath.Dir(outDir)
+	base := filepath.Base(outDir)
+	tmpDir, err := os.MkdirTemp(parent, "."+base+".tmp-*")
+	if err != nil {
+		return err
+	}
+	ok := false
+	defer func() {
+		if !ok {
+			_ = os.RemoveAll(tmpDir)
+		}
+	}()
+	if err := os.Chmod(tmpDir, 0o700); err != nil {
+		return err
+	}
+	if err := writePrivateAtomic(filepath.Join(tmpDir, "manifest.json"), manifestData); err != nil {
+		return fmt.Errorf("write temporary bundle manifest: %w", err)
+	}
+	if err := writePrivateAtomic(filepath.Join(tmpDir, "chunks.jsonl"), chunkData); err != nil {
+		return fmt.Errorf("write temporary bundle chunks: %w", err)
+	}
+	if _, err := LoadBundle(tmpDir); err != nil {
+		return fmt.Errorf("verify temporary bundle: %w", err)
+	}
+	if !force {
+		if err := os.Rename(tmpDir, outDir); err != nil {
+			return err
+		}
+		ok = true
+		return nil
+	}
+	oldDir := filepath.Join(parent, "."+base+".old-"+itoa(time.Now().UnixNano()))
+	hadOld := false
+	if _, err := os.Lstat(outDir); err == nil {
+		hadOld = true
+		if err := os.Rename(outDir, oldDir); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Rename(tmpDir, outDir); err != nil {
+		if hadOld {
+			_ = os.Rename(oldDir, outDir)
+		}
+		return err
+	}
+	if hadOld {
+		_ = os.RemoveAll(oldDir)
+	}
+	ok = true
+	return nil
 }
 
 func LoadBundle(dir string) (Bundle, error) {

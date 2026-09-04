@@ -20,4 +20,7 @@ Current controlled scripts:
 - `check-github-policy.sh` rejects blocked workflow patterns.
 - `build-release.sh` creates deterministic release archives.
 - `generate-sbom.sh` writes the release SPDX JSON.
+- `generate-provenance.sh` writes SLSA provenance for release assets.
+- `sign-release-provenance.sh` signs release provenance with Sigstore/cosign.
+- `write-release-checksums.sh` writes checksums for all release assets.
 - `smoke-release.sh` validates archive contents and checksums.

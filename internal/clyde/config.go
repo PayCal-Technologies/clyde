@@ -20,14 +20,15 @@ const (
 )
 
 type Config struct {
-	OllamaURL           string `json:"ollama_url"`
-	Model               string `json:"model"`
-	NumCtx              int    `json:"num_ctx"`
-	AskTimeoutSeconds   int    `json:"ask_timeout_seconds"`
-	AgentTimeoutSeconds int    `json:"agent_timeout_seconds"`
-	MaxContextChars     int    `json:"max_context_chars"`
-	MaxFileBytes        int64  `json:"max_file_bytes"`
-	MaxChunkChars       int    `json:"max_chunk_chars"`
+	OllamaURL           string   `json:"ollama_url"`
+	Model               string   `json:"model"`
+	NumCtx              int      `json:"num_ctx"`
+	AskTimeoutSeconds   int      `json:"ask_timeout_seconds"`
+	AgentTimeoutSeconds int      `json:"agent_timeout_seconds"`
+	MaxContextChars     int      `json:"max_context_chars"`
+	MaxFileBytes        int64    `json:"max_file_bytes"`
+	MaxChunkChars       int      `json:"max_chunk_chars"`
+	ExcludeFolders      []string `json:"exclude_folders,omitempty"`
 }
 
 func DefaultConfig() Config {
@@ -134,7 +135,10 @@ func ValidateConfig(cfg Config) error {
 	if err := validatePositiveInt64("max_file_bytes", cfg.MaxFileBytes, maxConfigFileBytes); err != nil {
 		return err
 	}
-	return validatePositiveInt("max_chunk_chars", cfg.MaxChunkChars, maxConfigChunkChars)
+	if err := validatePositiveInt("max_chunk_chars", cfg.MaxChunkChars, maxConfigChunkChars); err != nil {
+		return err
+	}
+	return validateExcludeFolders(cfg.ExcludeFolders)
 }
 
 func withConfigDefaults(cfg Config) Config {
@@ -178,6 +182,21 @@ func applyConfigEnv(cfg *Config) {
 func normalizeConfigStrings(cfg *Config) {
 	cfg.OllamaURL = strings.TrimSpace(cfg.OllamaURL)
 	cfg.Model = strings.TrimSpace(cfg.Model)
+	cfg.ExcludeFolders = normalizeExcludeFolders(cfg.ExcludeFolders)
+}
+
+func normalizeExcludeFolders(folders []string) []string {
+	out := make([]string, 0, len(folders))
+	seen := map[string]bool{}
+	for _, folder := range folders {
+		normalized := filepath.ToSlash(filepath.Clean(strings.TrimSpace(folder)))
+		if normalized == "." || normalized == "" || seen[normalized] {
+			continue
+		}
+		seen[normalized] = true
+		out = append(out, normalized)
+	}
+	return out
 }
 
 func rejectNegativeConfig(cfg Config) error {

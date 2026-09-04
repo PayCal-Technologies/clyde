@@ -145,15 +145,22 @@ func (r SyncReceipt) deletionCompleted() bool {
 }
 
 func (r SyncReceipt) deletionPlanned() bool {
-	return r.DeletionPhase == "planned"
+	return r.DeletionPhase == "planned" || r.DeletionPhase == "ambiguous"
 }
 
 func (r *SyncReceipt) recordDeletionPhase(phase string) {
 	r.DeletionPhase = phase
 }
 
-func (r SyncReceipt) plannedDeletionSources() []map[string]any {
-	sources := make([]map[string]any, 0, len(r.Deletions))
+func (r *SyncReceipt) reconcilePlannedDeletions(current []map[string]any) []map[string]any {
+	currentIDs := make(map[string]bool, len(current))
+	for _, source := range current {
+		id, _ := source["id"].(string)
+		if id != "" {
+			currentIDs[id] = true
+		}
+	}
+	var remaining []map[string]any
 	for _, deletion := range r.Deletions {
 		if deletion.SourceID == "" || deletion.Status == "deleted" {
 			continue
@@ -166,9 +173,13 @@ func (r SyncReceipt) plannedDeletionSources() []map[string]any {
 		if deletion.Title != "" {
 			source["title"] = deletion.Title
 		}
-		sources = append(sources, source)
+		if currentIDs[deletion.SourceID] {
+			remaining = append(remaining, source)
+			continue
+		}
+		r.recordDeletions([]map[string]any{source}, "deleted")
 	}
-	return sources
+	return remaining
 }
 
 func (r *SyncReceipt) recordDeletions(sources []map[string]any, status string) {
@@ -238,12 +249,31 @@ func (r SyncReceipt) backendIdentityCompatible(opts SyncOptions) bool {
 	if len(r.BackendIdentity.Command) == 0 {
 		return true
 	}
-	want := syncBackendIdentity(opts).Command
-	if len(r.BackendIdentity.Command) != len(want) {
+	want := syncBackendIdentity(opts)
+	if !sameStringSlice(r.BackendIdentity.Command, want.Command) {
 		return false
 	}
-	for i, part := range r.BackendIdentity.Command {
-		if part != want[i] {
+	if r.BackendIdentity.ResolvedPath != "" && r.BackendIdentity.ResolvedPath != want.ResolvedPath {
+		return false
+	}
+	if r.BackendIdentity.ExecutableSHA256 != "" && r.BackendIdentity.ExecutableSHA256 != want.ExecutableSHA256 {
+		return false
+	}
+	if r.BackendIdentity.Package != "" && r.BackendIdentity.Package != want.Package {
+		return false
+	}
+	if len(r.BackendIdentity.EnvContract) > 0 && !sameStringSlice(r.BackendIdentity.EnvContract, want.EnvContract) {
+		return false
+	}
+	return true
+}
+
+func sameStringSlice(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
 			return false
 		}
 	}

@@ -26,11 +26,16 @@ const (
 	maxTotalSourceBytes int64 = 512 * 1024 * 1024
 )
 
+var defaultExcludeFolders = []string{
+	".git", ".hg", ".svn", ".clyde",
+	"node_modules", "vendor", "build", "dist", ".next", ".turbo",
+	"DerivedData", "coverage", ".cache", "tmp", "temp", "target",
+	"bin", "obj", "__pycache__", ".venv", "venv", ".pytest_cache",
+	".mypy_cache", ".gradle",
+}
+
 var defaultExcludes = []string{
-	".git/**", ".hg/**", ".svn/**",
-	".clyde/**",
-	"node_modules/**", "vendor/**", "build/**", "dist/**", ".next/**",
-	".turbo/**", "DerivedData/**", "*.pyc", "*.pyo", "*.o", "*.a",
+	"*.pyc", "*.pyo", "*.o", "*.a",
 	"*.so", "*.dylib", "*.dll", "*.exe", "*.zip", "*.tar", "*.gz",
 	"*.7z", "*.dmg", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp",
 	"*.pdf", "*.sqlite", "*.db", "*.lock",
@@ -55,6 +60,9 @@ func ScanRepoWithOptions(repo string, opts ScanOptions) (ScanResult, error) {
 	if err := validateGlobPatterns(append(append([]string{}, opts.Include...), opts.Exclude...)); err != nil {
 		return ScanResult{}, err
 	}
+	if err := validateExcludeFolders(opts.ExcludeFolders); err != nil {
+		return ScanResult{}, err
+	}
 	abs, err := filepath.Abs(repo)
 	if err != nil {
 		return ScanResult{}, err
@@ -65,7 +73,9 @@ func ScanRepoWithOptions(repo string, opts ScanOptions) (ScanResult, error) {
 	}
 
 	result := ScanResult{Repo: abs}
-	candidates, discovery, err := candidatePaths(abs, opts.AllowFilesystemFallback)
+	excludeFolders := append([]string{}, defaultExcludeFolders...)
+	excludeFolders = append(excludeFolders, normalizeExcludeFolders(opts.ExcludeFolders)...)
+	candidates, discovery, err := candidatePaths(abs, opts.AllowFilesystemFallback, excludeFolders)
 	if err != nil {
 		return ScanResult{}, err
 	}
@@ -93,6 +103,10 @@ func ScanRepoWithOptions(repo string, opts ScanOptions) (ScanResult, error) {
 		}
 		if len(opts.Include) > 0 && !matchesAny(rel, opts.Include) {
 			appendSkip(&result, rel, "not matched by include globs")
+			continue
+		}
+		if inExcludedFolder(rel, excludeFolders) {
+			appendSkip(&result, rel, "excluded by folder")
 			continue
 		}
 		if matchesAny(rel, excludes) {
@@ -161,23 +175,28 @@ func appendSkip(result *ScanResult, path, reason string) {
 	result.Skips = append(result.Skips, SkipRecord{Path: path, Reason: reason})
 }
 
-func candidatePaths(repo string, allowFilesystemFallback bool) ([]string, ScanDiscovery, error) {
-	if _, err := os.Stat(filepath.Join(repo, ".git")); err == nil {
-		out, gitErr := gitListFiles(repo)
+func candidatePaths(repo string, allowFilesystemFallback bool, excludeFolders []string) ([]string, ScanDiscovery, error) {
+	root, inWorktree, worktreeErr := gitWorktreeRoot(repo)
+	if inWorktree {
+		out, gitErr := gitListFiles(root)
 		discovery := ScanDiscovery{
 			Method:            "git",
 			GitExclusionsUsed: gitErr == nil,
-			GitCommit:         gitCurrentCommit(repo),
-			GitWorkingTree:    gitWorkingTreeState(repo),
+			GitCommit:         gitCurrentCommit(root),
+			GitWorkingTree:    gitWorkingTreeState(root),
 		}
 		if gitErr != nil {
 			discovery.GitError = gitErr.Error()
 			if !allowFilesystemFallback {
 				return nil, discovery, errf("git-aware file discovery failed; refusing filesystem fallback in Git repository: %w", gitErr)
 			}
-			paths, walkErr := filesystemCandidatePaths(repo)
+			paths, truncated, walkErr := filesystemCandidatePaths(repo, excludeFolders)
 			if walkErr != nil {
 				return nil, discovery, walkErr
+			}
+			if truncated {
+				discovery.Truncated = true
+				return nil, discovery, errf("filesystem discovery exceeded %d paths; refusing incomplete scan", maxScannedPaths)
 			}
 			discovery.Method = "filesystem-fallback"
 			discovery.GitExclusionsUsed = false
@@ -186,39 +205,122 @@ func candidatePaths(repo string, allowFilesystemFallback bool) ([]string, ScanDi
 		paths := make([]string, 0, strings.Count(out, "\n"))
 		for _, line := range strings.Split(out, "\n") {
 			if line != "" {
-				paths = append(paths, filepath.Join(repo, filepath.FromSlash(line)))
+				path := filepath.Join(root, filepath.FromSlash(line))
+				if rel, ok := relWithinDir(path, repo); ok {
+					paths = append(paths, filepath.Join(repo, rel))
+				}
 			}
 		}
 		return paths, discovery, nil
 	}
-	paths, err := filesystemCandidatePaths(repo)
+	if worktreeErr != nil && hasGitMarkerAncestor(repo) {
+		discovery := ScanDiscovery{Method: "git", GitExclusionsUsed: false, GitError: worktreeErr.Error()}
+		if !allowFilesystemFallback {
+			return nil, discovery, errf("git-aware file discovery failed; refusing filesystem fallback in Git repository: %w", worktreeErr)
+		}
+		paths, truncated, err := filesystemCandidatePaths(repo, excludeFolders)
+		if err != nil {
+			return nil, discovery, err
+		}
+		if truncated {
+			discovery.Truncated = true
+			return nil, discovery, errf("filesystem discovery exceeded %d paths; refusing incomplete scan", maxScannedPaths)
+		}
+		discovery.Method = "filesystem-fallback"
+		return paths, discovery, nil
+	}
+	paths, truncated, err := filesystemCandidatePaths(repo, excludeFolders)
 	if err != nil {
 		return nil, ScanDiscovery{Method: "filesystem", GitExclusionsUsed: false}, err
+	}
+	if truncated {
+		return nil, ScanDiscovery{Method: "filesystem", GitExclusionsUsed: false, Truncated: true}, errf("filesystem discovery exceeded %d paths; refusing incomplete scan", maxScannedPaths)
 	}
 	return paths, ScanDiscovery{Method: "filesystem", GitExclusionsUsed: false}, nil
 }
 
-func filesystemCandidatePaths(repo string) ([]string, error) {
-	paths := make([]string, 0, min(maxScannedPaths, 4096))
+func filesystemCandidatePaths(repo string, excludeFolders []string) ([]string, bool, error) {
+	return filesystemCandidatePathsLimit(repo, maxScannedPaths, excludeFolders)
+}
+
+func filesystemCandidatePathsLimit(repo string, limit int, excludeFolders []string) ([]string, bool, error) {
+	if limit <= 0 {
+		return nil, false, errf("filesystem path limit must be greater than 0")
+	}
+	paths := make([]string, 0, min(limit, 4096))
+	truncated := false
 	err := filepath.WalkDir(repo, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
 		if d.IsDir() {
-			switch d.Name() {
-			case ".git", "node_modules":
+			rel, relErr := filepath.Rel(repo, path)
+			if relErr == nil && rel != "." && inExcludedFolder(filepath.ToSlash(rel)+"/_", excludeFolders) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 		paths = append(paths, path)
-		if len(paths) >= maxScannedPaths {
+		if len(paths) >= limit {
+			truncated = true
 			return filepath.SkipAll
 		}
 		return nil
 	})
 	sort.Strings(paths)
-	return paths, err
+	return paths, truncated, err
+}
+
+func gitWorktreeRoot(repo string) (string, bool, error) {
+	out, err := gitOutput(repo, "rev-parse", "--is-inside-work-tree")
+	if err != nil {
+		return "", false, err
+	}
+	if strings.TrimSpace(out) != "true" {
+		return "", false, nil
+	}
+	root, err := gitOutput(repo, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", false, err
+	}
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return "", false, errf("git did not report a worktree root")
+	}
+	return root, true, nil
+}
+
+func hasGitMarkerAncestor(path string) bool {
+	current := filepath.Clean(path)
+	for {
+		if _, err := os.Stat(filepath.Join(current, ".git")); err == nil {
+			return true
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return false
+		}
+		current = parent
+	}
+}
+
+func relWithinDir(path, dir string) (string, bool) {
+	cleanPath := filepath.Clean(path)
+	cleanDir := filepath.Clean(dir)
+	if realPath, err := filepath.EvalSymlinks(cleanPath); err == nil {
+		cleanPath = realPath
+	}
+	if realDir, err := filepath.EvalSymlinks(cleanDir); err == nil {
+		cleanDir = realDir
+	}
+	rel, err := filepath.Rel(cleanDir, cleanPath)
+	if err != nil {
+		return "", false
+	}
+	if rel == "." || (!filepath.IsAbs(rel) && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != "..") {
+		return rel, true
+	}
+	return "", false
 }
 
 func gitListFiles(repo string) (string, error) {
@@ -297,6 +399,36 @@ func matchesAny(rel string, patterns []string) bool {
 	return false
 }
 
+func inExcludedFolder(rel string, folders []string) bool {
+	rel = filepath.ToSlash(filepath.Clean(rel))
+	parts := strings.Split(rel, "/")
+	for _, folder := range folders {
+		folder = filepath.ToSlash(filepath.Clean(folder))
+		if folder == "." || folder == "" {
+			continue
+		}
+		folderParts := strings.Split(folder, "/")
+		for i := 0; i+len(folderParts) < len(parts); i++ {
+			if equalStringSlices(parts[i:i+len(folderParts)], folderParts) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func validateGlobPatterns(patterns []string) error {
 	for _, pattern := range patterns {
 		if strings.TrimSpace(pattern) == "" {
@@ -311,6 +443,22 @@ func validateGlobPatterns(patterns []string) error {
 		}
 		if _, err := filepath.Match(check, ""); err != nil {
 			return errf("invalid glob pattern %q: %v", pattern, err)
+		}
+	}
+	return nil
+}
+
+func validateExcludeFolders(folders []string) error {
+	for _, folder := range folders {
+		normalized := filepath.ToSlash(filepath.Clean(strings.TrimSpace(folder)))
+		if normalized == "." || normalized == "" {
+			return errf("exclude folder must not be blank")
+		}
+		if filepath.IsAbs(normalized) || normalized == ".." || strings.HasPrefix(normalized, "../") {
+			return errf("exclude folder must be relative: %s", folder)
+		}
+		if strings.ContainsRune(normalized, 0) {
+			return errf("exclude folder must not contain NUL bytes")
 		}
 	}
 	return nil

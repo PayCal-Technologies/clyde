@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   release:
@@ -21,6 +22,7 @@ jobs:
           git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git fetch --depth=1 origin "${GITHUB_SHA}"
           git checkout --detach FETCH_HEAD
+          git remote remove origin
       - name: Check Go
         run: .github/scripts/install-go.sh linux amd64
       - name: GitHub policy guard
@@ -39,6 +41,15 @@ jobs:
       - name: Generate SPDX SBOM
         shell: bash
         run: .github/scripts/generate-sbom.sh
+      - name: Generate SLSA provenance
+        shell: bash
+        run: .github/scripts/generate-provenance.sh
+      - name: Sign release provenance
+        shell: bash
+        run: .github/scripts/sign-release-provenance.sh
+      - name: Write final release checksums
+        shell: bash
+        run: .github/scripts/write-release-checksums.sh
       - name: Smoke test release archives
         shell: bash
         run: .github/scripts/smoke-release.sh
@@ -49,11 +60,12 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
-          else
-            gh release create "${GITHUB_REF_NAME}" dist/* --verify-tag --generate-notes
+            echo "release already exists; refusing to replace assets" >&2
+            exit 1
           fi
-      - name: Verify published release assets
+          gh release create "${GITHUB_REF_NAME}" --draft --verify-tag --generate-notes
+          gh release upload "${GITHUB_REF_NAME}" dist/*
+      - name: Verify draft release assets
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -61,8 +73,14 @@ jobs:
           set -euo pipefail
           mkdir -p /tmp/clyde-published-assets
           gh release download "${GITHUB_REF_NAME}" --dir /tmp/clyde-published-assets
+          cmp dist/SHA256SUMS /tmp/clyde-published-assets/SHA256SUMS
           if command -v sha256sum >/dev/null 2>&1; then
             (cd /tmp/clyde-published-assets && sha256sum -c SHA256SUMS)
           else
             (cd /tmp/clyde-published-assets && shasum -a 256 -c SHA256SUMS)
           fi
+      - name: Publish verified release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: gh release edit "${GITHUB_REF_NAME}" --draft=false

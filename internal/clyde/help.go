@@ -83,6 +83,9 @@ func cmdHelp(args []string, stdin io.Reader, out, errOut io.Writer) error {
 	case "book":
 		printBookHelp(out)
 		return nil
+	case "receipt":
+		printReceiptHelp(out)
+		return nil
 	}
 	return run([]string{target, "--help"}, stdin, out, errOut)
 }
@@ -164,6 +167,16 @@ func printBookHelp(out io.Writer) {
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "example:")
 	fmt.Fprintln(out, "  clyde book Clyde self feedback")
+}
+
+func printReceiptHelp(out io.Writer) {
+	fmt.Fprintln(out, "usage: clyde receipt status PATH [--json]")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Show read-only sync receipt state and safe resume guidance.")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "examples:")
+	fmt.Fprintln(out, "  clyde receipt status .clyde/out/sync-receipt.json")
+	fmt.Fprintln(out, "  clyde receipt status .clyde/out/sync-receipt.json --json")
 }
 
 func printCommandInfo(out io.Writer, command commandInfo) {

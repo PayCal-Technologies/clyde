@@ -29,6 +29,7 @@ type scanReport struct {
 	MaxChunkChars  int               `json:"max_chunk_chars"`
 	Include        []string          `json:"include"`
 	Exclude        []string          `json:"exclude"`
+	ExcludeFolders []string          `json:"exclude_folders"`
 	TopFiles       []scanReportFile  `json:"top_files"`
 	SkipReasons    []scanReportCount `json:"skip_reasons"`
 	ExtensionStats []scanReportCount `json:"extension_stats"`
@@ -59,6 +60,7 @@ func buildScanReport(result ScanResult, chunkCount int, flags scanFlags, top int
 		MaxChunkChars:  flags.maxChunkChars,
 		Include:        []string(flags.include),
 		Exclude:        []string(flags.exclude),
+		ExcludeFolders: []string(flags.excludeFolder),
 		TopFiles:       topFiles,
 		SkipReasons:    sortedCounts(skipReasonCounts(result.Skips)),
 		ExtensionStats: sortedCounts(extensionCounts(result.Files)),

@@ -75,6 +75,35 @@ type HTTPSink struct {
 	URL string
 }
 
+func startProgressHeartbeat(sink ProgressSink, jobID, phase, message string, done, total int, relPath string, interval time.Duration) func() {
+	if sink == nil {
+		return func() {}
+	}
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
+	emit(sink, jobID, phase, message, done, total, relPath)
+	stop := make(chan struct{})
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				emit(sink, jobID, phase, "still "+message, done, total, relPath)
+			case <-stop:
+				return
+			}
+		}
+	}()
+	return func() {
+		close(stop)
+		<-finished
+	}
+}
+
 func (s HTTPSink) Emit(event ProgressEvent) {
 	_ = rpcCall(s.URL, "status.event", event, nil)
 }

@@ -16,7 +16,7 @@ func cmdPreview(args []string, out io.Writer) error {
 		}
 		cfg = loaded
 	}
-	flags := scanFlags{maxFileBytes: cfg.MaxFileBytes, maxChunkChars: cfg.MaxChunkChars}
+	flags := scanFlagsFromConfig(cfg)
 	fs := flag.NewFlagSet("preview", flag.ContinueOnError)
 	fs.SetOutput(out)
 	showFiles := fs.Int("show-files", 20, "show first N included files")
@@ -73,7 +73,7 @@ func cmdScanReport(args []string, out io.Writer) error {
 		}
 		cfg = loaded
 	}
-	flags := scanFlags{maxFileBytes: cfg.MaxFileBytes, maxChunkChars: cfg.MaxChunkChars}
+	flags := scanFlagsFromConfig(cfg)
 	fs := flag.NewFlagSet("scan-report", flag.ContinueOnError)
 	fs.SetOutput(out)
 	jsonOut := fs.Bool("json", false, "print machine-readable scan report")

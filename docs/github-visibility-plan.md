@@ -47,5 +47,5 @@ evaluate, trust, and share.
 - [ ] GitHub release notes link to `https://paycaltech.com/clyde/help/`.
 - [ ] Repository topics and homepage still match the project.
 
-For v0.2.7, the README, changelog, testing guide, examples, and bundled help
+For v1.0.0, the README, changelog, testing guide, examples, and bundled help
 were updated before tagging the release.

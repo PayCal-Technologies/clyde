@@ -79,4 +79,4 @@ PY
   done
 done
 
-(cd dist && sha256_write *.tar.gz *.zip > SHA256SUMS)
+.github/scripts/write-release-checksums.sh

@@ -85,6 +85,16 @@ func TestSyncReceiptResumeBindsBackendCommandWhenRecorded(t *testing.T) {
 	}
 }
 
+func TestSyncReceiptResumeBindsRecordedBackendDigest(t *testing.T) {
+	opts := SyncOptions{NotebookID: "nb", Backend: "mcp", MCPCommand: []string{"npx", "-y", "notebooklm-mcp@2.0.0"}}
+	receipt := newSyncReceipt(opts)
+	receipt.BackendIdentity.ExecutableSHA256 = "sha256:other"
+
+	if receipt.canResume(opts) {
+		t.Fatal("expected backend executable digest mismatch")
+	}
+}
+
 func TestDeleteExistingNLMSourcesSkipsCompletedReceipt(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "receipt.json")
 	receipt := newSyncReceipt(SyncOptions{NotebookID: "nb", Backend: "nlm", DeleteExistingSources: true, ReceiptPath: path})
@@ -163,6 +173,7 @@ func TestDeleteExistingNLMSourcesUsesPlannedInventoryOnResume(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "nlm.log")
 	t.Setenv("CLYDE_NLM_HELPER", "1")
 	t.Setenv("CLYDE_NLM_HELPER_LOG", logPath)
+	t.Setenv("CLYDE_NLM_HELPER_LIST", `[{"id":"src-a","title":"A"},{"id":"src-b","title":"B"},{"id":"src-c","title":"new"}]`)
 	path := filepath.Join(t.TempDir(), "receipt.json")
 	receipt := newSyncReceipt(SyncOptions{NotebookID: "nb", Backend: "nlm", DeleteExistingSources: true, ReceiptPath: path})
 	receipt.recordDeletionPhase("planned")
@@ -183,8 +194,43 @@ func TestDeleteExistingNLMSourcesUsesPlannedInventoryOnResume(t *testing.T) {
 	if !slices.Contains(fields, "src-a") || !slices.Contains(fields, "src-b") {
 		t.Fatalf("expected planned IDs in delete command: %q", data)
 	}
-	if slices.Contains(fields, "src-c") || slices.Contains(fields, "list-called") {
-		t.Fatalf("unexpected fresh listing/delete target: %q", data)
+	if slices.Contains(fields, "src-c") {
+		t.Fatalf("unexpected fresh listing delete target: %q", data)
+	}
+}
+
+func TestDeleteExistingNLMSourcesReconcilesMissingPlannedIDs(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "nlm.log")
+	t.Setenv("CLYDE_NLM_HELPER", "1")
+	t.Setenv("CLYDE_NLM_HELPER_LOG", logPath)
+	t.Setenv("CLYDE_NLM_HELPER_LIST", `[{"id":"src-b","title":"B"}]`)
+	path := filepath.Join(t.TempDir(), "receipt.json")
+	receipt := newSyncReceipt(SyncOptions{NotebookID: "nb", Backend: "nlm", DeleteExistingSources: true, ReceiptPath: path})
+	receipt.recordDeletionPhase("planned")
+	receipt.recordDeletions([]map[string]any{
+		{"id": "src-a", "title": "A"},
+		{"id": "src-b", "title": "B"},
+	}, "planned")
+	opts := SyncOptions{NotebookID: "nb", Backend: "nlm", DeleteExistingSources: true, ReceiptPath: path, RequestTimeout: 10 * time.Second}
+
+	if err := deleteExistingNLMSources(t.Context(), []string{os.Args[0], "-test.run=TestNLMHelperProcess", "--"}, "nb", opts, &receipt); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := strings.Fields(string(data))
+	if slices.Contains(fields, "src-a") {
+		t.Fatalf("missing planned ID should not be retried: %q", data)
+	}
+	if !slices.Contains(fields, "src-b") {
+		t.Fatalf("remaining planned ID should be retried: %q", data)
+	}
+	for _, deletion := range receipt.Deletions {
+		if deletion.SourceID == "src-a" && deletion.Status != "deleted" {
+			t.Fatalf("missing source should be marked deleted: %#v", receipt.Deletions)
+		}
 	}
 }
 
@@ -200,17 +246,35 @@ func TestNLMHelperProcess(t *testing.T) {
 		args = args[1:]
 	}
 	logPath := os.Getenv("CLYDE_NLM_HELPER_LOG")
+	if len(args) >= 2 && args[0] == "login" && args[1] == "--check" {
+		_ = appendTestLog(logPath, "login-checked\n")
+		os.Exit(0)
+	}
 	if len(args) >= 2 && args[0] == "source" && args[1] == "list" {
-		_ = os.WriteFile(logPath, []byte("list-called src-c\n"), 0o600)
-		_, _ = os.Stdout.WriteString(`[{"id":"src-c","title":"new"}]`)
+		_ = appendTestLog(logPath, "list-called\n")
+		payload := os.Getenv("CLYDE_NLM_HELPER_LIST")
+		if payload == "" {
+			payload = `[{"id":"src-c","title":"new"}]`
+		}
+		_, _ = os.Stdout.WriteString(payload)
 		os.Exit(0)
 	}
 	if len(args) >= 2 && args[0] == "source" && args[1] == "delete" {
-		_ = os.WriteFile(logPath, []byte(strings.Join(args, " ")), 0o600)
+		_ = appendTestLog(logPath, strings.Join(args, " ")+"\n")
 		_, _ = os.Stdout.WriteString(`{}`)
 		os.Exit(0)
 	}
 	os.Exit(2)
+}
+
+func appendTestLog(path, text string) error {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	_, err = file.WriteString(text)
+	return err
 }
 
 func TestSaveSyncReceiptUsesPrivateFile(t *testing.T) {

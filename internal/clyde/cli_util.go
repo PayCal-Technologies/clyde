@@ -14,6 +14,7 @@ import (
 type scanFlags struct {
 	include       multiFlag
 	exclude       multiFlag
+	excludeFolder multiFlag
 	maxFileBytes  int64
 	maxChunkChars int
 	allowFallback bool
@@ -22,15 +23,25 @@ type scanFlags struct {
 func addScanFlags(fs *flag.FlagSet, flags *scanFlags) {
 	fs.Var(&flags.include, "include", "only include paths matching this glob; repeatable")
 	fs.Var(&flags.exclude, "exclude", "skip paths matching this glob in addition to Clyde defaults; repeatable")
+	fs.Var(&flags.excludeFolder, "exclude-folder", "skip folders with this name or relative path; repeatable")
 	fs.Int64Var(&flags.maxFileBytes, "max-file-bytes", flags.maxFileBytes, "skip files larger than this many bytes")
 	fs.IntVar(&flags.maxChunkChars, "max-chunk-chars", flags.maxChunkChars, "split uploaded source text at this many characters")
 	fs.BoolVar(&flags.allowFallback, "allow-filesystem-fallback", flags.allowFallback, "when Git discovery fails in a Git repository, deliberately fall back to raw filesystem traversal")
+}
+
+func scanFlagsFromConfig(cfg Config) scanFlags {
+	return scanFlags{
+		excludeFolder: append(multiFlag(nil), cfg.ExcludeFolders...),
+		maxFileBytes:  cfg.MaxFileBytes,
+		maxChunkChars: cfg.MaxChunkChars,
+	}
 }
 
 func scanAndChunk(repo string, flags scanFlags, bookTitle string) (ScanResult, []ChunkRecord, error) {
 	result, err := ScanRepoWithOptions(repo, ScanOptions{
 		Include:                 flags.include,
 		Exclude:                 flags.exclude,
+		ExcludeFolders:          flags.excludeFolder,
 		MaxFileBytes:            flags.maxFileBytes,
 		AllowFilesystemFallback: flags.allowFallback,
 	})
@@ -41,6 +52,28 @@ func scanAndChunk(repo string, flags scanFlags, bookTitle string) (ScanResult, [
 	if err != nil {
 		return ScanResult{}, nil, err
 	}
+	return result, chunks, nil
+}
+
+func scanAndChunkWithProgress(repo string, flags scanFlags, bookTitle string, sink ProgressSink, jobID string, heartbeatInterval time.Duration) (ScanResult, []ChunkRecord, error) {
+	stop := startProgressHeartbeat(sink, jobID, "scanning", "scanning repository", 0, 0, "", heartbeatInterval)
+	result, err := ScanRepoWithOptions(repo, ScanOptions{
+		Include:                 flags.include,
+		Exclude:                 flags.exclude,
+		ExcludeFolders:          flags.excludeFolder,
+		MaxFileBytes:            flags.maxFileBytes,
+		AllowFilesystemFallback: flags.allowFallback,
+	})
+	stop()
+	if err != nil {
+		return ScanResult{}, nil, err
+	}
+	emit(sink, jobID, "chunking", "preparing source chunks", 0, 0, "")
+	chunks, err := MakeChunksWithLimit(result, flags.maxChunkChars, bookTitle, maxGeneratedChunks)
+	if err != nil {
+		return ScanResult{}, nil, err
+	}
+	emit(sink, jobID, "prepared", "prepared "+itoa(int64(len(chunks)))+" source chunks", len(chunks), len(chunks), "")
 	return result, chunks, nil
 }
 
@@ -84,6 +117,9 @@ func validateScanFlags(flags scanFlags) error {
 	}
 	if err := validateGlobPatterns(flags.exclude); err != nil {
 		return errf("--exclude %v", err)
+	}
+	if err := validateExcludeFolders(flags.excludeFolder); err != nil {
+		return errf("--exclude-folder %v", err)
 	}
 	return nil
 }

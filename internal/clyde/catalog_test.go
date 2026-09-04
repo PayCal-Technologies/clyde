@@ -6,7 +6,7 @@ import (
 )
 
 func TestCatalogHelpersExposeTopLevelCommandsAndShells(t *testing.T) {
-	wantCommands := "about help completion doctor tui config preview scan-report bundle sync daemon status book models ask agent"
+	wantCommands := "about help completion doctor tui config preview scan-report bundle sync receipt daemon status book models ask agent"
 	if got := topLevelCommandList(); got != wantCommands {
 		t.Fatalf("topLevelCommandList()=%q", got)
 	}

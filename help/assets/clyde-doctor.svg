@@ -12,8 +12,8 @@
     <text x="220" y="112" fill="#9ab2c5"> : </text>
     <text x="245" y="112" fill="#57b3ff">~/repo</text>
     <text x="340" y="112" fill="#eaf6ff">$ clyde doctor . --ollama-timeout 5</text>
-    <text x="34" y="180" fill="#9ab2c5">Clyde doctor 0.2.7 (darwin/arm64)</text>
-    <text x="34" y="214" fill="#4bd680">OK version: Clyde 0.2.7</text>
+    <text x="34" y="180" fill="#9ab2c5">Clyde doctor 1.0.0 (darwin/arm64)</text>
+    <text x="34" y="214" fill="#4bd680">OK version: Clyde 1.0.0</text>
     <text x="34" y="248" fill="#4bd680">OK platform: darwin/arm64</text>
     <text x="34" y="282" fill="#4bd680">OK config: loaded ~/Library/Application Support/clyde/config.json</text>
     <text x="34" y="316" fill="#4bd680">OK git: /usr/bin/git</text>

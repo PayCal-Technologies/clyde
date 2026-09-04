@@ -25,7 +25,7 @@ func cmdBundle(args []string, out io.Writer) error {
 		}
 		cfg = loaded
 	}
-	flags := scanFlags{maxFileBytes: cfg.MaxFileBytes, maxChunkChars: cfg.MaxChunkChars}
+	flags := scanFlagsFromConfig(cfg)
 	fs := flag.NewFlagSet("bundle", flag.ContinueOnError)
 	fs.SetOutput(out)
 	outDir := fs.String("out", ".clyde/out", "directory for manifest.json and chunks.jsonl")
@@ -63,7 +63,13 @@ func cmdBundle(args []string, out io.Writer) error {
 		return errf("--out must be a directory, not a file: %s", *outDir)
 	}
 	addRepoPathExclude(fs.Arg(0), *outDir, &flags)
-	result, err := ScanRepo(fs.Arg(0), flags.include, flags.exclude, flags.maxFileBytes)
+	result, err := ScanRepoWithOptions(fs.Arg(0), ScanOptions{
+		Include:                 flags.include,
+		Exclude:                 flags.exclude,
+		ExcludeFolders:          flags.excludeFolder,
+		MaxFileBytes:            flags.maxFileBytes,
+		AllowFilesystemFallback: flags.allowFallback,
+	})
 	if err != nil {
 		return err
 	}

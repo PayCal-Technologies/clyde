@@ -23,6 +23,7 @@ type ScanResult struct {
 type ScanOptions struct {
 	Include                 []string
 	Exclude                 []string
+	ExcludeFolders          []string
 	MaxFileBytes            int64
 	AllowFilesystemFallback bool
 }
@@ -33,6 +34,7 @@ type ScanDiscovery struct {
 	GitError          string
 	GitCommit         string
 	GitWorkingTree    string
+	Truncated         bool
 }
 
 func (r ScanResult) TotalBytes() int64 {

@@ -176,6 +176,40 @@ func TestBundleRecordsSecretScanCompletion(t *testing.T) {
 	}
 }
 
+func TestBundleAllowsExplicitFilesystemFallback(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(dir, "app.go"), "package main\n")
+	outDir := filepath.Join(dir, "out")
+	t.Setenv("PATH", "")
+
+	var out, errOut bytes.Buffer
+	status := Main([]string{"bundle", dir, "--out", outDir}, &out, &errOut)
+	if status != 1 || !strings.Contains(errOut.String(), "refusing filesystem fallback") {
+		t.Fatalf("expected fail-closed git discovery, status=%d stderr=%s", status, errOut.String())
+	}
+
+	out.Reset()
+	errOut.Reset()
+	status = Main([]string{"bundle", dir, "--out", outDir, "--allow-filesystem-fallback"}, &out, &errOut)
+	if status != 0 {
+		t.Fatalf("status=%d stderr=%s", status, errOut.String())
+	}
+	data, err := os.ReadFile(filepath.Join(outDir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest Manifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Discovery.Method != "filesystem-fallback" {
+		t.Fatalf("unexpected discovery: %#v", manifest.Discovery)
+	}
+}
+
 func TestSyncDeleteExistingSourcesRequiresNLMBackend(t *testing.T) {
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, "app.go"), "package main\n")
@@ -188,6 +222,78 @@ func TestSyncDeleteExistingSourcesRequiresNLMBackend(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "--delete-existing-sources requires --backend nlm") {
 		t.Fatalf("unexpected stderr: %s", errOut.String())
+	}
+}
+
+func TestSyncDryRunListsPlannedChangesWithoutWritingOrDeleting(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "app.go"), "package main\n")
+	logPath := filepath.Join(dir, "nlm.log")
+	t.Setenv("CLYDE_NLM_HELPER", "1")
+	t.Setenv("CLYDE_NLM_HELPER_LOG", logPath)
+	t.Setenv("CLYDE_NLM_HELPER_LIST", `[{"id":"src-1","title":"existing source"}]`)
+
+	command := os.Args[0] + " -test.run=TestNLMHelperProcess --"
+	var out, errOut bytes.Buffer
+	status := Main([]string{
+		"sync", dir,
+		"--notebook-id", "nb",
+		"--backend", "nlm",
+		"--nlm-command", command,
+		"--delete-existing-sources",
+		"--dry-run",
+	}, &out, &errOut)
+
+	if status != 0 {
+		t.Fatalf("status=%d stderr=%s", status, errOut.String())
+	}
+	if !strings.Contains(out.String(), "Dry run: no remote changes were made.") ||
+		!strings.Contains(out.String(), "app.go [1/1]") ||
+		!strings.Contains(out.String(), "src-1: existing source") {
+		t.Fatalf("unexpected output: %s", out.String())
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "source delete") || strings.Contains(string(data), "source add") {
+		t.Fatalf("dry run made a remote change: %s", data)
+	}
+}
+
+func TestReceiptStatusPrintsVerifiedBundleResumeCommand(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "app.go"), "package main\n")
+	bundleDir := filepath.Join(dir, "out")
+	manifest, err := WriteBundle(ScanResult{
+		Repo: dir,
+		Files: []FileRecord{{
+			Path:   filepath.Join(dir, "app.go"),
+			Rel:    "app.go",
+			Size:   int64(len("package main\n")),
+			SHA256: sha256HexString("package main\n"),
+			Text:   "package main\n",
+		}},
+	}, bundleDir, 100, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiptPath := filepath.Join(bundleDir, "sync-receipt.json")
+	receipt := newSyncReceipt(SyncOptions{NotebookID: "nb", Backend: "mcp", BundleDigest: manifest.BundleSHA256})
+	receipt.recordChunk(ChunkRecord{Path: "app.go", ChunkIndex: 1, ChunkTotal: 1, ChunkSHA256: "chunk"}, "app.go [1/1]", "", "pending", nil)
+	if err := saveSyncReceipt(receiptPath, receipt); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut bytes.Buffer
+	status := Main([]string{"receipt", "status", receiptPath}, &out, &errOut)
+	if status != 0 {
+		t.Fatalf("status=%d stderr=%s", status, errOut.String())
+	}
+	if !strings.Contains(out.String(), "Chunks: pending=1") ||
+		!strings.Contains(out.String(), "--resume") ||
+		!strings.Contains(out.String(), bundleDir) {
+		t.Fatalf("unexpected output: %s", out.String())
 	}
 }
 
@@ -293,7 +399,7 @@ func TestHelpJSONPrintsCommandCatalog(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.Product != productName || len(payload.Commands) != 20 {
+	if payload.Product != productName || len(payload.Commands) != 21 {
 		t.Fatalf("unexpected catalog: %#v", payload)
 	}
 	foundHelp := false
@@ -301,6 +407,7 @@ func TestHelpJSONPrintsCommandCatalog(t *testing.T) {
 	foundDoctor := false
 	foundScanReport := false
 	foundBundleVerify := false
+	foundReceipt := false
 	for _, command := range payload.Commands {
 		if command.Name == "help" && command.Syntax != "" && len(command.Examples) > 0 {
 			foundHelp = true
@@ -317,8 +424,11 @@ func TestHelpJSONPrintsCommandCatalog(t *testing.T) {
 		if command.Name == "bundle verify" && command.Access == "Read-only" {
 			foundBundleVerify = true
 		}
+		if command.Name == "receipt" && command.Access == "Read-only" {
+			foundReceipt = true
+		}
 	}
-	if !foundHelp || !foundConfigInit || !foundDoctor || !foundScanReport || !foundBundleVerify {
+	if !foundHelp || !foundConfigInit || !foundDoctor || !foundScanReport || !foundBundleVerify || !foundReceipt {
 		t.Fatalf("expected commands missing from catalog: %#v", payload.Commands)
 	}
 }
@@ -545,6 +655,18 @@ func TestCLIRejectsInvalidScanGlob(t *testing.T) {
 		t.Fatalf("expected failure")
 	}
 	if !strings.Contains(errOut.String(), "invalid glob pattern") {
+		t.Fatalf("unexpected stderr: %s", errOut.String())
+	}
+}
+
+func TestCLIRejectsInvalidExcludeFolder(t *testing.T) {
+	var out, errOut bytes.Buffer
+	status := Main([]string{"preview", ".", "--exclude-folder", "../outside"}, &out, &errOut)
+
+	if status != 1 {
+		t.Fatalf("expected failure")
+	}
+	if !strings.Contains(errOut.String(), "exclude folder") {
 		t.Fatalf("unexpected stderr: %s", errOut.String())
 	}
 }

@@ -52,7 +52,10 @@ func doctorOllamaCheck(cfg Config, timeout time.Duration) doctorCheck {
 }
 
 func doctorRepoCheck(repo string, cfg Config) doctorCheck {
-	result, err := ScanRepo(repo, nil, nil, cfg.MaxFileBytes)
+	result, err := ScanRepoWithOptions(repo, ScanOptions{
+		ExcludeFolders: cfg.ExcludeFolders,
+		MaxFileBytes:   cfg.MaxFileBytes,
+	})
 	if err != nil {
 		return doctorCheck{Name: "repo", Status: "error", Message: err.Error()}
 	}

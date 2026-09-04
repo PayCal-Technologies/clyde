@@ -248,6 +248,72 @@ func TestVerifyBundleRejectsManifestTotalBytesMismatch(t *testing.T) {
 	}
 }
 
+func TestVerifyBundleRejectsSecretScanTargetMismatch(t *testing.T) {
+	text := "hello\n"
+	chunk := ChunkRecord{
+		Path:       "a.txt",
+		SHA256:     sha256HexString(text),
+		ChunkIndex: 1,
+		ChunkTotal: 1,
+		Text:       "Path: a.txt\n\n" + text,
+	}
+	chunk.ChunkSHA256 = sha256HexString(chunk.Text)
+	err := verifyBundleStructure(Manifest{
+		Schema:     "clyde.bundle.v1",
+		FileCount:  1,
+		ChunkCount: 1,
+		TotalBytes: int64(len(text)),
+		SecretScan: &manifestScan{TargetSHA256: "sha256:wrong", Completed: true},
+		Files: []manifestFile{{
+			Path:       "a.txt",
+			Size:       int64(len(text)),
+			SHA256:     sha256HexString(text),
+			ChunkCount: 1,
+		}},
+	}, []ChunkRecord{chunk})
+
+	if err == nil || !strings.Contains(err.Error(), "secret scan target digest mismatch") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadBundleVerifiesSecretScanTargetDigest(t *testing.T) {
+	dir := t.TempDir()
+	text := "hello\n"
+	result := ScanResult{
+		Repo: dir,
+		Files: []FileRecord{{
+			Path:   filepath.Join(dir, "a.txt"),
+			Rel:    "a.txt",
+			Size:   int64(len(text)),
+			SHA256: sha256HexString(text),
+			Text:   text,
+		}},
+	}
+	snapshotDir, targetDigest, err := writeSecretScanSnapshot(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(snapshotDir)
+	outDir := filepath.Join(dir, "out")
+	_, err = WriteBundleWithOptions(result, outDir, 100, "", "", WriteBundleOptions{
+		SecretScanCommand: "scanner {repo}",
+		SecretScanResult: &manifestScan{
+			Command:      "scanner {repo}",
+			TargetSHA256: targetDigest,
+			OutputSHA256: "sha256:" + sha256HexString("clean\n"),
+			Completed:    true,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := LoadBundle(outDir); err != nil {
+		t.Fatalf("expected secret scan target digest to verify: %v", err)
+	}
+}
+
 func TestVerifyBundleRejectsInvalidManifestPathString(t *testing.T) {
 	err := verifyBundleStructure(Manifest{
 		Schema:     "clyde.bundle.v1",

@@ -21,7 +21,8 @@ func TestLoadConfigReadsClydeConfigFile(t *testing.T) {
   "agent_timeout_seconds": 34,
   "max_context_chars": 5000,
   "max_file_bytes": 123,
-  "max_chunk_chars": 456
+  "max_chunk_chars": 456,
+  "exclude_folders": ["fixtures", "generated/api"]
 }
 `)
 
@@ -32,7 +33,7 @@ func TestLoadConfigReadsClydeConfigFile(t *testing.T) {
 	if gotPath != path {
 		t.Fatalf("unexpected path: %s", gotPath)
 	}
-	if cfg.Model != "gemma3:4b" || cfg.NumCtx != 4096 || cfg.MaxFileBytes != 123 {
+	if cfg.Model != "gemma3:4b" || cfg.NumCtx != 4096 || cfg.MaxFileBytes != 123 || strings.Join(cfg.ExcludeFolders, ",") != "fixtures,generated/api" {
 		t.Fatalf("unexpected config: %#v", cfg)
 	}
 }
@@ -157,6 +158,21 @@ func TestLoadConfigDefaultsZeroValues(t *testing.T) {
 	if cfg.NumCtx != DefaultConfig().NumCtx || cfg.MaxChunkChars != DefaultConfig().MaxChunkChars {
 		t.Fatalf("zero values did not default: %#v", cfg)
 	}
+	if len(cfg.ExcludeFolders) != 0 {
+		t.Fatalf("default config should not include target folders: %#v", cfg.ExcludeFolders)
+	}
+}
+
+func TestLoadConfigRejectsInvalidExcludeFolder(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("CLYDE_CONFIG", path)
+	mustWrite(t, path, `{"exclude_folders":["/tmp/build"]}`)
+
+	_, _, err := LoadConfig()
+
+	if err == nil || !strings.Contains(err.Error(), "exclude folder") {
+		t.Fatalf("unexpected error: %v", err)
+	}
 }
 
 func TestConfigCommandInitAndShow(t *testing.T) {
@@ -194,6 +210,9 @@ func TestConfigCommandInitAndShow(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), `"model": "qwen2.5-coder:7b"`) {
 		t.Fatalf("unexpected config output: %s", out.String())
+	}
+	if _, ok := payload["exclude_folders"]; ok {
+		t.Fatalf("basic config should not include target folders: %s", out.String())
 	}
 }
 

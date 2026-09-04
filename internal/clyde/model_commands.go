@@ -137,7 +137,7 @@ func cmdAgent(args []string, stdin io.Reader, out io.Writer) error {
 		}
 		cfg = loaded
 	}
-	flags := scanFlags{maxFileBytes: cfg.MaxFileBytes, maxChunkChars: cfg.MaxChunkChars}
+	flags := scanFlagsFromConfig(cfg)
 	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
 	fs.SetOutput(out)
 	model := fs.String("model", cfg.Model, "Ollama model name")

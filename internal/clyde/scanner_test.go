@@ -2,6 +2,7 @@ package clyde
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -54,8 +55,48 @@ func TestScanRepoExcludesClydeOutputByDefault(t *testing.T) {
 	if len(result.Files) != 1 || result.Files[0].Rel != "app.go" {
 		t.Fatalf("unexpected files: %#v", result.Files)
 	}
-	if len(result.Skips) != 1 || result.Skips[0].Path != ".clyde/out/chunks.jsonl" || result.Skips[0].Reason != "excluded by glob" {
+	if len(result.Skips) != 0 {
 		t.Fatalf("unexpected skips: %#v", result.Skips)
+	}
+}
+
+func TestScanRepoExcludesNestedFolders(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "app.go"), "package main\n")
+	if err := os.MkdirAll(filepath.Join(dir, "packages", "api", "generated"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "packages", "web", "dist"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(dir, "packages", "api", "generated", "client.go"), "package generated\n")
+	mustWrite(t, filepath.Join(dir, "packages", "web", "dist", "bundle.js"), "console.log('built')\n")
+
+	result, err := ScanRepoWithOptions(dir, ScanOptions{
+		ExcludeFolders: []string{"generated"},
+		MaxFileBytes:   250000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Files) != 1 || result.Files[0].Rel != "app.go" {
+		t.Fatalf("unexpected files: %#v", result.Files)
+	}
+	if len(result.Skips) != 0 {
+		t.Fatalf("filesystem discovery should prune excluded folders before skips, got %#v", result.Skips)
+	}
+}
+
+func TestScanRepoRejectsInvalidExcludeFolder(t *testing.T) {
+	dir := t.TempDir()
+
+	_, err := ScanRepoWithOptions(dir, ScanOptions{
+		ExcludeFolders: []string{"../outside"},
+		MaxFileBytes:   250000,
+	})
+
+	if err == nil || !strings.Contains(err.Error(), "exclude folder") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -142,6 +183,51 @@ func TestScanRepoAllowsExplicitFilesystemFallback(t *testing.T) {
 	}
 	if result.Discovery.GitError == "" {
 		t.Fatalf("expected recorded Git error: %#v", result.Discovery)
+	}
+	if len(result.Files) != 1 || result.Files[0].Rel != "app.go" {
+		t.Fatalf("unexpected files: %#v", result.Files)
+	}
+}
+
+func TestFilesystemCandidatePathsReportsTruncation(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "a.txt"), "a\n")
+	mustWrite(t, filepath.Join(dir, "b.txt"), "b\n")
+
+	paths, truncated, err := filesystemCandidatePathsLimit(dir, 1, defaultExcludeFolders)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !truncated {
+		t.Fatal("expected filesystem discovery truncation")
+	}
+	if len(paths) != 1 {
+		t.Fatalf("expected one collected path, got %d: %#v", len(paths), paths)
+	}
+}
+
+func TestScanRepoUsesGitDiscoveryFromSubdirectory(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	runTestGit(t, dir, "init")
+	mustWrite(t, filepath.Join(dir, ".gitignore"), "component/ignored.txt\n")
+	if err := os.MkdirAll(filepath.Join(dir, "component"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(dir, "component", "app.go"), "package main\n")
+	mustWrite(t, filepath.Join(dir, "component", "ignored.txt"), "ignored\n")
+	mustWrite(t, filepath.Join(dir, "outside.go"), "package outside\n")
+
+	result, err := ScanRepo(filepath.Join(dir, "component"), nil, nil, 250000)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Discovery.Method != "git" || !result.Discovery.GitExclusionsUsed {
+		t.Fatalf("expected git discovery from subdirectory, got %#v", result.Discovery)
 	}
 	if len(result.Files) != 1 || result.Files[0].Rel != "app.go" {
 		t.Fatalf("unexpected files: %#v", result.Files)
@@ -251,5 +337,15 @@ func mustWrite(t *testing.T, path, text string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func runTestGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, out)
 	}
 }

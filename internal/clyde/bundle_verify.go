@@ -146,7 +146,47 @@ func verifyBundleStructure(manifest Manifest, chunks []ChunkRecord) error {
 			return errf("bundle reconstructed digest mismatch for %s", file.Path)
 		}
 	}
+	if manifest.SecretScan != nil && manifest.SecretScan.TargetSHA256 != "" {
+		actual, err := reconstructedSecretScanTargetSHA256(manifest, chunks)
+		if err != nil {
+			return err
+		}
+		if actual != manifest.SecretScan.TargetSHA256 {
+			return errf("secret scan target digest mismatch: manifest=%s actual=%s", manifest.SecretScan.TargetSHA256, actual)
+		}
+	}
 	return nil
+}
+
+func reconstructedSecretScanTargetSHA256(manifest Manifest, chunks []ChunkRecord) (string, error) {
+	byPath := make(map[string]map[int]ChunkRecord)
+	for _, chunk := range chunks {
+		if byPath[chunk.Path] == nil {
+			byPath[chunk.Path] = make(map[int]ChunkRecord)
+		}
+		byPath[chunk.Path][chunk.ChunkIndex] = chunk
+	}
+	hash := sha256.New()
+	for _, file := range manifest.Files {
+		var body strings.Builder
+		chunksByIndex := byPath[file.Path]
+		for i := 1; i <= file.ChunkCount; i++ {
+			chunk, ok := chunksByIndex[i]
+			if !ok {
+				return "", errf("bundle missing chunk index for %s: %d", file.Path, i)
+			}
+			part, err := chunkBody(chunk.Text)
+			if err != nil {
+				return "", err
+			}
+			body.WriteString(part)
+		}
+		text := body.String()
+		fmt.Fprintf(hash, "%s\x00%d\x00%s\x00", file.Path, len([]byte(text)), file.SHA256)
+		hash.Write([]byte(text))
+		hash.Write([]byte{0})
+	}
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func chunkBody(text string) (string, error) {

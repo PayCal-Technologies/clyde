@@ -19,12 +19,13 @@ func cmdSync(args []string, out, errOut io.Writer) error {
 		}
 		cfg = loaded
 	}
-	flags := scanFlags{maxFileBytes: cfg.MaxFileBytes, maxChunkChars: cfg.MaxChunkChars}
+	flags := scanFlagsFromConfig(cfg)
 	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
 	fs.SetOutput(out)
 	notebookID := fs.String("notebook-id", "", "NotebookLM notebook id")
 	notebookURL := fs.String("notebook-url", "", "NotebookLM notebook URL")
 	approve := fs.Bool("approve-upload", false, "approve upload")
+	dryRun := fs.Bool("dry-run", false, "check and print the planned remote changes without uploading or deleting")
 	bundleDir := fs.String("bundle", "", "upload an already reviewed Clyde bundle directory")
 	approveDigest := fs.String("approve-digest", "", "approve upload of a specific bundle digest")
 	receiptPath := fs.String("receipt", "", "write sync receipt JSON to this path")
@@ -39,10 +40,11 @@ func cmdSync(args []string, out, errOut io.Writer) error {
 	jobID := fs.String("job-id", "sync", "status daemon job id")
 	subject := fs.String("subject", "", "generate a dated NotebookLM book title")
 	bookTitle := fs.String("book-title", "", "use an exact NotebookLM book title")
-	fs.Float64("heartbeat-interval", 1, "accepted for compatibility; progress events emit per phase")
+	heartbeatInterval := fs.Float64("heartbeat-interval", 5, "seconds between progress updates during long operations")
 	addScanFlags(fs, &flags)
 	boolFlags := map[string]bool{
 		"approve-upload":            true,
+		"dry-run":                   true,
 		"delete-existing-sources":   true,
 		"quiet-progress":            true,
 		"resume":                    true,
@@ -57,7 +59,7 @@ func cmdSync(args []string, out, errOut io.Writer) error {
 	if *bundleDir != "" && fs.NArg() > 1 {
 		return errf("sync with --bundle accepts at most one REPO label")
 	}
-	if !*approve {
+	if !*approve && !*dryRun {
 		return errf("sync requires --approve-upload")
 	}
 	if (*notebookID == "" && *notebookURL == "") || (*notebookID != "" && *notebookURL != "") {
@@ -72,6 +74,9 @@ func cmdSync(args []string, out, errOut io.Writer) error {
 	if err := validatePositiveSeconds("mcp-timeout", *timeout); err != nil {
 		return err
 	}
+	if err := validatePositiveSeconds("heartbeat-interval", *heartbeatInterval); err != nil {
+		return err
+	}
 	if err := validateCommandFlag("mcp-command", *mcpCommand); err != nil {
 		return err
 	}
@@ -84,7 +89,7 @@ func cmdSync(args []string, out, errOut io.Writer) error {
 	if err := validateScanFlags(flags); err != nil {
 		return err
 	}
-	if *bundleDir != "" && strings.TrimSpace(*approveDigest) == "" {
+	if *bundleDir != "" && !*dryRun && strings.TrimSpace(*approveDigest) == "" {
 		return errf("sync with --bundle requires --approve-digest")
 	}
 	if *resume && strings.TrimSpace(*receiptPath) == "" && *bundleDir == "" {
@@ -104,14 +109,30 @@ func cmdSync(args []string, out, errOut io.Writer) error {
 		title = plan.Title()
 		prefix = plan.SourcePrefix()
 	}
+	var sinks []ProgressSink
+	if !*quiet {
+		sinks = append(sinks, ConsoleSink{Writer: errOut})
+	}
+	if *statusURL != "" {
+		sinks = append(sinks, HTTPSink{URL: *statusURL})
+	}
+	var sink ProgressSink
+	if len(sinks) == 1 {
+		sink = sinks[0]
+	} else if len(sinks) > 1 {
+		sink = TeeSink(sinks)
+	}
+	heartbeat := time.Duration(*heartbeatInterval * float64(time.Second))
 	var chunks []ChunkRecord
 	var bundleDigest string
 	if *bundleDir != "" {
+		stop := startProgressHeartbeat(sink, *jobID, "validating", "verifying bundle", 0, 0, "", heartbeat)
 		bundle, err := LoadBundle(*bundleDir)
+		stop()
 		if err != nil {
 			return err
 		}
-		if bundle.Digest != *approveDigest {
+		if strings.TrimSpace(*approveDigest) != "" && bundle.Digest != *approveDigest {
 			return errf("approved digest does not match bundle: approved=%s bundle=%s", *approveDigest, bundle.Digest)
 		}
 		chunks = bundle.Chunks
@@ -127,7 +148,7 @@ func cmdSync(args []string, out, errOut io.Writer) error {
 		fmt.Fprintf(out, "Total bytes: %s\n", formatBytes(bundle.Manifest.TotalBytes))
 	} else {
 		addRepoPathExclude(fs.Arg(0), *receiptPath, &flags)
-		result, liveChunks, err := scanAndChunk(fs.Arg(0), flags, title)
+		result, liveChunks, err := scanAndChunkWithProgress(fs.Arg(0), flags, title, sink, *jobID, heartbeat)
 		if err != nil {
 			return err
 		}
@@ -137,20 +158,7 @@ func cmdSync(args []string, out, errOut io.Writer) error {
 	if plan != nil {
 		printBookPlan(out, *plan)
 	}
-	var sinks []ProgressSink
-	if !*quiet {
-		sinks = append(sinks, ConsoleSink{Writer: errOut})
-	}
-	if *statusURL != "" {
-		sinks = append(sinks, HTTPSink{URL: *statusURL})
-	}
-	var sink ProgressSink
-	if len(sinks) == 1 {
-		sink = sinks[0]
-	} else if len(sinks) > 1 {
-		sink = TeeSink(sinks)
-	}
-	count, err := SyncChunks(context.Background(), chunks, SyncOptions{
+	syncOpts := SyncOptions{
 		NotebookID:            *notebookID,
 		NotebookURL:           *notebookURL,
 		Backend:               *backend,
@@ -161,10 +169,20 @@ func cmdSync(args []string, out, errOut io.Writer) error {
 		Progress:              sink,
 		JobID:                 *jobID,
 		TitlePrefix:           prefix,
+		HeartbeatInterval:     heartbeat,
 		BundleDigest:          bundleDigest,
 		ReceiptPath:           *receiptPath,
 		Resume:                *resume,
-	})
+	}
+	if *dryRun {
+		plan, err := PlanSync(context.Background(), chunks, syncOpts)
+		if err != nil {
+			return err
+		}
+		printSyncDryRun(out, plan, *notebookID, *notebookURL, *backend)
+		return nil
+	}
+	count, err := SyncChunks(context.Background(), chunks, syncOpts)
 	if err != nil {
 		return err
 	}
@@ -184,4 +202,30 @@ func cmdSync(args []string, out, errOut io.Writer) error {
 		fmt.Fprintf(out, "Sync receipt: %s\n", *receiptPath)
 	}
 	return nil
+}
+
+func printSyncDryRun(out io.Writer, plan SyncPlan, notebookID, notebookURL, backend string) {
+	target := notebookID
+	if target == "" {
+		target = notebookURL
+	}
+	fmt.Fprintln(out, "\nDry run: no remote changes were made.")
+	fmt.Fprintf(out, "Notebook: %s via %s\n", target, backend)
+	fmt.Fprintf(out, "Would upload %d chunks:\n", len(plan.Uploads))
+	for _, title := range plan.Uploads {
+		fmt.Fprintf(out, "  %s\n", title)
+	}
+	if len(plan.Deletes) == 0 {
+		return
+	}
+	fmt.Fprintf(out, "Would delete %d existing sources:\n", len(plan.Deletes))
+	for _, source := range plan.Deletes {
+		id, _ := source["id"].(string)
+		title, _ := source["title"].(string)
+		if title == "" {
+			fmt.Fprintf(out, "  %s\n", id)
+			continue
+		}
+		fmt.Fprintf(out, "  %s: %s\n", id, title)
+	}
 }

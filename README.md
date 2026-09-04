@@ -9,7 +9,7 @@
 Clyde is a small Go MCP-client harness for moving auditable repository source bundles
 into Google NotebookLM.
 
-Current version: `0.2.8`
+Current version: `1.0.0`
 
 Official resources:
 
@@ -30,6 +30,8 @@ It is intentionally conservative:
 - `bundle` writes private, digest-bound `manifest.json` and `chunks.jsonl` files for review.
 - `bundle verify` validates the reviewed bundle before upload approval.
 - `sync --bundle` uploads only after `--approve-upload` and `--approve-digest`.
+- `sync --dry-run` checks the selected backend and prints the planned changes
+  without uploading, deleting, or writing a receipt.
 - Binary files, large files, common dependency/build directories, and likely
   secrets are skipped by default.
 - The default NotebookLM backend is the pinned `notebooklm-mcp@2.0.0` MCP server
@@ -72,8 +74,8 @@ Use this procedure for every Clyde release and performance pass:
 5. Update `VERSION`, `productVersion`, `CHANGELOG.md`, and this README.
 6. Commit, push, create an annotated version tag, and push the tag. The release
    workflow builds deterministic Linux, macOS, and Windows archives, verifies
-   archive contents, publishes SHA-256 checksums and an SPDX-compatible SBOM,
-   then verifies published asset checksums.
+   archive contents, publishes SHA-256 checksums, an SPDX-compatible SBOM, and
+   Sigstore-signed SLSA provenance, then verifies published asset checksums.
 7. Keep GitHub workflow changes local-only and repo-controlled. Before changing
    workflows, run `.github/scripts/check-github-policy.sh` and follow
    `.github/WORKFLOW_POLICY.md`.
@@ -83,13 +85,13 @@ Use this procedure for every Clyde release and performance pass:
 ## Install From Source
 
 ```bash
-go install github.com/PayCal-Technologies/clyde/cmd/clyde@v0.2.8
+go install github.com/PayCal-Technologies/clyde/cmd/clyde@v1.0.0
 ```
 
 Windows from source in PowerShell:
 
 ```powershell
-go install github.com/PayCal-Technologies/clyde/cmd/clyde@v0.2.8
+go install github.com/PayCal-Technologies/clyde/cmd/clyde@v1.0.0
 clyde --about
 ```
 
@@ -216,6 +218,7 @@ Configuration reference:
 | `max_context_chars` | Maximum direct prompt/context size Clyde will prepare. | `16000` |
 | `max_file_bytes` | Per-file source scanning cap. | `250000` |
 | `max_chunk_chars` | Source bundle chunk size for NotebookLM upload records. | `18000` |
+| `exclude_folders` | Optional additional folder names or relative folder paths to skip during repository scans. Omit it for the basic behavior-only config. | none |
 
 Omitted or zero numeric config values are replaced with defaults. String values
 are trimmed. Negative numeric values, blank model names, NUL bytes, invalid
@@ -235,6 +238,7 @@ Preview with tighter scope:
 clyde preview /path/to/repo \
   --include "internal/**/*.go" \
   --exclude "testdata/**" \
+  --exclude-folder "generated" \
   --max-file-bytes 100000 \
   --show-files 10 \
   --show-skips 25
@@ -246,11 +250,12 @@ Machine-readable preview:
 clyde preview /path/to/repo --json
 ```
 
-In Git repositories, Clyde uses `git ls-files -co --exclude-standard` so
-`.gitignore` and standard Git exclusions are honored. If Git discovery fails,
-Clyde stops instead of falling back to a raw filesystem walk. Use
-`--allow-filesystem-fallback` only when you intentionally accept that `.gitignore`
-may not be honored.
+In Git repositories, Clyde uses `git ls-files -co --exclude-standard` from the
+worktree root so `.gitignore` and standard Git exclusions are honored even when
+you scan a subdirectory. If Git discovery fails, Clyde stops instead of falling
+back to a raw filesystem walk. Use `--allow-filesystem-fallback` only when you
+intentionally accept that `.gitignore` may not be honored. Raw filesystem
+discovery fails closed if Clyde reaches its path ceiling.
 
 Create a local bundle:
 
@@ -367,6 +372,25 @@ clyde sync --bundle .clyde/out \
   --approve-upload
 ```
 
+Review a sync before approving it:
+
+```bash
+clyde sync --bundle .clyde/out \
+  --notebook-id "your-notebook-id" \
+  --dry-run
+```
+
+`--dry-run` verifies the bundle, checks the selected backend, and lists every
+chunk it would upload. It does not require upload approval or a receipt, and
+never uploads, deletes sources, or writes a receipt. With `--backend nlm
+--delete-existing-sources`, it also lists the exact current NotebookLM sources
+that a real sync would delete.
+
+During sync, Clyde prints the current phase immediately and repeats a simple
+"still working" update every five seconds during long scans, bundle checks, and
+backend calls. Use `--heartbeat-interval SECONDS` to adjust that cadence, or
+`--quiet-progress` to suppress terminal progress lines.
+
 `sync --bundle` verifies `manifest.json`, `chunks.jsonl`, per-chunk digests, and
 the overall bundle digest before upload. This is the auditable source-transfer
 path: the digest you approve is bound to the exact chunk content Clyde sends.
@@ -387,6 +411,13 @@ clyde sync --bundle .clyde/out \
   --approve-digest "sha256:..." \
   --approve-upload \
   --resume
+```
+
+Inspect a receipt after an interrupted sync. When the receipt is beside its
+matching bundle, Clyde prints a ready-to-run resume command:
+
+```bash
+clyde receipt status .clyde/out/sync-receipt.json
 ```
 
 By default the MCP backend runs:
@@ -425,8 +456,10 @@ clyde sync --bundle .clyde/out \
 That deletion is intentional and permanent for the target NotebookLM notebook.
 `--delete-existing-sources` requires a receipt. Clyde records the pre-delete
 source inventory before deletion and marks those entries deleted only after the
-delete command succeeds. If deletion is interrupted, resume uses only the
-originally planned source IDs and does not delete sources added later.
+delete command succeeds. If deletion is interrupted, resume reconciles the
+planned IDs against the current remote source list, marks already-missing
+planned IDs as deleted, retries only planned IDs that still exist, and does not
+delete sources added later.
 
 A direct live-repository sync remains available for less-auditable local
 experiments:
@@ -468,14 +501,18 @@ Clyde also applies several guardrails before data leaves the local machine:
 - `agent` refuses non-local Ollama URLs unless `--allow-remote-ollama` is set.
 - Git repositories fail closed if Git-aware discovery fails; Clyde does not
   silently fall back to a raw filesystem walk that ignores `.gitignore`.
-  `--allow-filesystem-fallback` makes that fallback explicit.
+  `--allow-filesystem-fallback` makes that fallback explicit. Git worktrees are
+  detected from subdirectories, and raw filesystem discovery fails closed if it
+  hits Clyde's path ceiling.
 - Repo scans skip symlinks, non-regular files, binary files, likely secrets,
-  dependency/build folders, and files larger than `max_file_bytes`.
+  built-in dependency/build/cache folders, any configured excluded folders, and
+  files larger than `max_file_bytes`.
 - Clyde rejects symlinked parent directories for config, bundle, and receipt
   writes, and rejects symlinks or non-regular files when reading bundles and
   receipts.
 - Bundle manifests record discovery provenance and secret-scan evidence when
-  those checks run.
+  those checks run; `bundle verify` recomputes the captured secret-scan target
+  digest from reconstructed source content.
 - CLI duration, context, port, URL, and backend command flags are validated
   before network or process work starts.
 - Clyde-written config files use private file permissions, and Clyde rejects

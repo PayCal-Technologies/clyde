@@ -47,7 +47,7 @@ Current test inventory:
 | Area | Count |
 | --- | ---: |
 | Go test files | 19 |
-| `func Test...` tests | 138 |
+| `func Test...` tests | 145 |
 | `func Fuzz...` targets | 4 |
 
 All tests currently live under `internal/clyde`.
@@ -56,8 +56,8 @@ All tests currently live under `internal/clyde`.
 | --- | --- |
 | `agent_test.go` | Agent prompt construction, model selection, UTF-8-safe truncation, context prioritization. |
 | `book_test.go` | Notebook/book naming plans and title-derived naming. |
-| `bundler_test.go` | Chunk generation, chunk boundaries, bundle manifests, metadata, skip recording, invalid output paths. |
-| `cli_test.go` | Preview, scan-report, bundle, sync guardrails, help, JSON help catalog, doctor, about links, completions, numeric flag validation, prompt input limits. |
+| `bundler_test.go` | Chunk generation, chunk boundaries, bundle manifests, metadata, skip recording, invalid output paths, secret-scan target verification. |
+| `cli_test.go` | Preview, scan-report, bundle, filesystem fallback wiring, sync guardrails, help, JSON help catalog, doctor, about links, completions, numeric flag validation, prompt input limits. |
 | `config_test.go` | Config loading, environment overrides, URL validation, string hardening, numeric limits, file permission checks, defaults, config commands. |
 | `jsonrpc_test.go` | JSON-RPC HTTP failure handling and request body size limits. |
 | `mcp_test.go` | MCP framing, lowercase content-length support, oversized frame rejection. |
@@ -65,9 +65,9 @@ All tests currently live under `internal/clyde`.
 | `notebooklm_test.go` | Subprocess payload redaction, timeout summaries, limited buffer truncation. |
 | `ollama_test.go` | Ollama model listing, generation, streaming, malformed streams, metadata sanitization, hardened inputs, CLI ask/agent/model behavior, remote URL guard. |
 | `path_strings_test.go` | Suspicious Unicode, NUL, absolute, parent, and Windows-style path string rejection. |
-| `scanner_test.go` | Repository scanning, secret skips, include/exclude behavior, invalid paths, invalid size limits, symlink skipping. |
+| `scanner_test.go` | Repository scanning, Git subdirectory discovery, secret skips, include/exclude behavior, invalid paths, invalid size limits, symlink skipping. |
 | `scan_report_test.go` | Scan report sorting, counts, and top-file behavior. |
-| `sync_receipt_test.go` | Receipt matching, resume safety, destructive deletion inventories, ambiguous upload states, backend identity, and private receipt writes. |
+| `sync_receipt_test.go` | Receipt matching, resume safety, destructive deletion reconciliation, ambiguous upload states, backend identity, and private receipt writes. |
 | `status_test.go` | Status store formatting and recorded events. |
 | `catalog_test.go` | Command catalog alignment with command registration and help output. |
 | `tui_test.go` | TUI model index behavior. |
@@ -140,6 +140,9 @@ Covered behavior:
 - symlinks are skipped;
 - Git repositories fail closed when Git-aware discovery fails unless
   `--allow-filesystem-fallback` is explicit;
+- Git worktrees are detected from requested subdirectories and repository-root
+  exclusions are still honored;
+- raw filesystem discovery fails closed if Clyde's path ceiling is reached;
 - non-directory repo paths are rejected;
 - invalid file-size limits are rejected;
 - include globs may match no files without crashing.
@@ -355,10 +358,13 @@ GOOS=windows GOARCH=amd64 go test -c ./internal/clyde -o /tmp/clyde-windows-test
 ```
 
 The release workflow uses only local shell steps to satisfy the repository's
-local-only Actions policy. It builds deterministic tar/zip archives, creates a
-minimal SPDX JSON SBOM, checks every archive for required files, runs the Linux
-amd64 binary smoke test, and verifies published release asset checksums after
-upload.
+local-only Actions policy. It verifies the downloaded Go bootstrap archive,
+builds deterministic tar/zip archives, creates an SPDX JSON SBOM with release
+artifact checksums plus Go toolchain and optional NotebookLM backend metadata,
+creates SLSA provenance, signs that provenance with Sigstore keyless signing in
+GitHub Actions OIDC, checks every archive for required files, runs the Linux
+amd64 binary smoke test, uploads assets to a draft release, compares remote
+checksums to the local checksum file, and publishes only after verification.
 
 Windows cross-build checks are useful after MCP process lifecycle changes
 because the Windows implementation uses Job Objects behind build tags.
