@@ -39,6 +39,9 @@ jobs:
       - name: Build archives
         shell: bash
         run: .github/scripts/build-release.sh
+      - name: Generate user-facing release notes
+        shell: bash
+        run: .github/scripts/generate-release-notes.sh
       - name: Generate SPDX SBOM
         shell: bash
         run: .github/scripts/generate-sbom.sh
@@ -65,7 +68,7 @@ jobs:
             echo "release already exists; refusing to replace assets" >&2
             exit 1
           fi
-          gh release create "${GITHUB_REF_NAME}" --draft --verify-tag --generate-notes
+          gh release create "${GITHUB_REF_NAME}" --draft --verify-tag --notes-file dist/RELEASE_NOTES.md
           gh release upload "${GITHUB_REF_NAME}" dist/*
       - name: Verify draft release assets
         env:

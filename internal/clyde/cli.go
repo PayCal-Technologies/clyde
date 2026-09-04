@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 const (
@@ -53,9 +54,44 @@ func MainWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 			return 0
 		}
 		fmt.Fprintf(stderr, "clyde: error: %v\n", err)
+		if hint := nextActionHint(args, err.Error()); hint != "" {
+			fmt.Fprintf(stderr, "clyde: next: %s\n", hint)
+		}
 		return 1
 	}
 	return 0
+}
+
+func nextActionHint(args []string, message string) string {
+	switch {
+	case strings.HasPrefix(message, "unknown command:"):
+		return "run `clyde help` to list commands."
+	case strings.Contains(message, "requires REPO"):
+		command := "preview"
+		if len(args) > 0 && args[0] != "" {
+			command = args[0]
+		}
+		return fmt.Sprintf("choose a repository path, for example: `clyde %s .`.", command)
+	case strings.Contains(message, "requires --approve-upload"):
+		return "run the command with `--dry-run` first; add `--approve-upload` only after review."
+	case strings.Contains(message, "requires exactly one of --notebook-id or --notebook-url"):
+		return "provide one destination, for example: `--notebook-id YOUR_NOTEBOOK_ID`."
+	case strings.Contains(message, "requires --approve-digest"):
+		return "run `clyde bundle verify BUNDLE_DIR`, then copy its printed digest into `--approve-digest`."
+	case strings.Contains(message, "--resume requires --receipt"):
+		return "provide the receipt from the original sync with `--receipt PATH`."
+	case strings.Contains(message, "--resume requires an existing sync receipt"):
+		return "use the receipt created by the original sync, or remove `--resume` to start a new transfer."
+	default:
+		return "run `clyde help " + helpTarget(args) + "` for command usage."
+	}
+}
+
+func helpTarget(args []string) string {
+	if len(args) > 0 && args[0] != "" {
+		return args[0]
+	}
+	return ""
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {

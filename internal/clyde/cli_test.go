@@ -25,6 +25,30 @@ func TestPreviewShowsIncludedFiles(t *testing.T) {
 	}
 }
 
+func TestCLIErrorHintsSuggestNextAction(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "unknown command", args: []string{"wat"}, want: "run `clyde help` to list commands"},
+		{name: "missing repository", args: []string{"preview"}, want: "clyde preview ."},
+		{name: "missing approval", args: []string{"sync", "."}, want: "--dry-run"},
+		{name: "missing destination", args: []string{"sync", ".", "--approve-upload"}, want: "--notebook-id YOUR_NOTEBOOK_ID"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out, errOut bytes.Buffer
+			if status := Main(tt.args, &out, &errOut); status != 1 {
+				t.Fatalf("status=%d stderr=%s", status, errOut.String())
+			}
+			if !strings.Contains(errOut.String(), "clyde: next:") || !strings.Contains(errOut.String(), tt.want) {
+				t.Fatalf("unexpected stderr: %s", errOut.String())
+			}
+		})
+	}
+}
+
 func TestPreviewJSON(t *testing.T) {
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, "app.go"), "package main\n")

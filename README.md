@@ -4,7 +4,7 @@
 [![GitHub release](https://img.shields.io/github/v/release/PayCal-Technologies/clyde)](https://github.com/PayCal-Technologies/clyde/releases)
 [![License: 0BSD](https://img.shields.io/badge/license-0BSD-blue.svg)](LICENSE)
 [![Go Reference](https://pkg.go.dev/badge/github.com/PayCal-Technologies/clyde.svg)](https://pkg.go.dev/github.com/PayCal-Technologies/clyde)
-[![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-63b7ff)](#install-from-source)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-63b7ff)](#install)
 
 Clyde is a small Go MCP-client harness for moving auditable repository source bundles
 into Google NotebookLM.
@@ -21,6 +21,7 @@ Official resources:
 - Testing guide: [`TESTING.md`](TESTING.md)
 - Contributing: [`CONTRIBUTING.md`](CONTRIBUTING.md)
 - Security reports: [`SECURITY.md`](SECURITY.md)
+- Terms and safety labels: [`docs/glossary.md`](docs/glossary.md)
 
 ![Clyde terminal showing doctor diagnostics and repository scan report output](help/assets/clyde-terminal.svg)
 
@@ -82,7 +83,25 @@ Use this procedure for every Clyde release and performance pass:
 8. Rebuild the local global install after the release when this workstation
    needs the new `clyde` binary.
 
-## Install From Source
+## Install
+
+### Release archives (recommended)
+
+Download the archive matching your operating system and CPU from the
+[latest Clyde release](https://github.com/PayCal-Technologies/clyde/releases/latest).
+Each release has platform archives, `SHA256SUMS`, an SPDX SBOM, signed SLSA
+provenance, and a generated `clyde.1` manual page on macOS and Linux.
+
+Extract the archive, then run its included binary:
+
+```bash
+tar -xzf clyde_1.0.2_darwin_arm64.tar.gz
+./clyde_1.0.2_darwin_arm64/clyde --about
+```
+
+On Windows, extract the matching `.zip` archive and run `clyde.exe --about`.
+
+### Install from source
 
 ```bash
 go install github.com/PayCal-Technologies/clyde/cmd/clyde@v1.0.2
@@ -99,8 +118,9 @@ Clyde is portable Go and is intended to run on Windows, macOS, and Linux.
 
 ## First Safe Run
 
-Use a released version, inspect local readiness and repository scope, prepare a
-reviewable bundle, and simulate the transfer before approving any upload:
+Use a release archive or a released source version, inspect local readiness and
+repository scope, prepare a reviewable bundle, and simulate the transfer before
+approving any upload:
 
 ```bash
 go install github.com/PayCal-Technologies/clyde/cmd/clyde@v1.0.2
@@ -117,6 +137,18 @@ NotebookLM sync use cross-platform Go APIs. Windows users still need local
 dependencies for the commands they run, such as Git for fast repository file
 discovery, Ollama for `ask` and `agent`, and Node/npm or `nlm` for NotebookLM
 sync backends.
+
+## Safety Labels
+
+Use these labels when choosing a command:
+
+- **Read-only** commands inspect local state without writing or uploading.
+- **Writes locally** commands create configuration, bundles, or receipts.
+- **Uploads repository chunks** commands require explicit approval.
+- **Deletes existing sources** requires the `nlm` backend and explicit approval.
+
+The full definitions are in the [Clyde glossary](docs/glossary.md). The normal
+workflow is **preview -> bundle -> verify -> dry run -> approve**.
 
 ## Usage
 
