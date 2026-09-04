@@ -28,7 +28,12 @@ case "$(printf '%s' "$arch_name" | tr '[:upper:]' '[:lower:]')" in
   *) echo "unsupported architecture: $arch_name" >&2; exit 1 ;;
 esac
 
-install_root="${RUNNER_TEMP:-/tmp}/go"
+temp_root="${RUNNER_TEMP:-/tmp}"
+if command -v cygpath >/dev/null 2>&1 && [[ "$temp_root" =~ ^[A-Za-z]: ]]; then
+  temp_root="$(cygpath -u "$temp_root")"
+fi
+
+install_root="${temp_root}/go"
 rm -rf "$install_root"
 
 sha256_file() {
@@ -104,30 +109,35 @@ PY
 }
 
 download_filename="go${version}.${goos}-${goarch}"
-metadata_file="${RUNNER_TEMP:-/tmp}/go-downloads.json"
+metadata_file="${temp_root}/go-downloads.json"
 
 if [ "$goos" = "windows" ]; then
-  archive="${RUNNER_TEMP:-/tmp}/go.zip"
+  archive="${temp_root}/go.zip"
   download_filename="${download_filename}.zip"
   curl -fLsSLo "$archive" "https://go.dev/dl/${download_filename}"
   curl -fLsSLo "$metadata_file" "https://go.dev/dl/?mode=json&include=all"
   expected="$(metadata_sha256 "$metadata_file" "$download_filename")"
   actual="$(sha256_file "$archive")"
   test "$actual" = "$expected"
-  unzip -q "$archive" -d "${RUNNER_TEMP:-/tmp}"
+  unzip -q "$archive" -d "$temp_root"
 else
-  archive="${RUNNER_TEMP:-/tmp}/go.tar.gz"
+  archive="${temp_root}/go.tar.gz"
   download_filename="${download_filename}.tar.gz"
   curl -fLsSLo "$archive" "https://go.dev/dl/${download_filename}"
   curl -fLsSLo "$metadata_file" "https://go.dev/dl/?mode=json&include=all"
   expected="$(metadata_sha256 "$metadata_file" "$download_filename")"
   actual="$(sha256_file "$archive")"
   test "$actual" = "$expected"
-  tar -C "${RUNNER_TEMP:-/tmp}" -xzf "$archive"
+  tar -C "$temp_root" -xzf "$archive"
 fi
 
 if [ -n "${GITHUB_PATH:-}" ]; then
   echo "${install_root}/bin" >> "$GITHUB_PATH"
 fi
 
-"${install_root}/bin/go" version
+go_binary="${install_root}/bin/go"
+if [ "$goos" = "windows" ]; then
+  go_binary="${go_binary}.exe"
+fi
+
+"$go_binary" version
