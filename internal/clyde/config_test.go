@@ -166,7 +166,7 @@ func TestLoadConfigDefaultsZeroValues(t *testing.T) {
 func TestLoadConfigRejectsInvalidExcludeFolder(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	t.Setenv("CLYDE_CONFIG", path)
-	mustWrite(t, path, `{"exclude_folders":["/tmp/build"]}`)
+	mustWrite(t, path, `{"exclude_folders":["../build"]}`)
 
 	_, _, err := LoadConfig()
 
