@@ -79,7 +79,7 @@ with open(output_path, 'w', encoding='ascii', newline='\n') as handle:
 PY
 
 if [ "$mode" = "check" ]; then
-  cmp -s "$output" docs/clyde.1 || {
+  tr -d '\r' <docs/clyde.1 | cmp -s "$output" - || {
     echo "docs/clyde.1 is stale; run .github/scripts/generate-man-page.sh" >&2
     exit 1
   }
