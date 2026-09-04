@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.0.1 - 2026-09-04
+
+- Fix GitHub release Go-download checksum verification using Go's official download metadata.
+
 ## v1.0.0 - 2026-09-04
 
 - Add repeatable `--exclude-folder` scanning controls and optional

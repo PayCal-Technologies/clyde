@@ -71,21 +71,56 @@ PY
   exit 1
 }
 
+metadata_sha256() {
+  local metadata_file="$1"
+  local filename="$2"
+  local python_command
+
+  if command -v python3 >/dev/null 2>&1; then
+    python_command=python3
+  elif command -v python >/dev/null 2>&1; then
+    python_command=python
+  else
+    echo "Python is required to read the Go download metadata" >&2
+    exit 1
+  fi
+
+  "$python_command" - "$metadata_file" "$filename" <<'PY'
+import json
+import sys
+
+metadata_path, filename = sys.argv[1:]
+with open(metadata_path, encoding="utf-8") as metadata_file:
+    releases = json.load(metadata_file)
+
+for release in releases:
+    for download in release["files"]:
+        if download["filename"] == filename:
+            print(download["sha256"])
+            sys.exit(0)
+
+raise SystemExit(f"checksum not found for {filename}")
+PY
+}
+
+download_filename="go${version}.${goos}-${goarch}"
+metadata_file="${RUNNER_TEMP:-/tmp}/go-downloads.json"
+
 if [ "$goos" = "windows" ]; then
   archive="${RUNNER_TEMP:-/tmp}/go.zip"
-  checksum_file="${archive}.sha256"
-  curl -fsSLo "$archive" "https://go.dev/dl/go${version}.${goos}-${goarch}.zip"
-  curl -fsSLo "$checksum_file" "https://go.dev/dl/go${version}.${goos}-${goarch}.zip.sha256"
-  expected="$(awk '{ print $1 }' "$checksum_file")"
+  download_filename="${download_filename}.zip"
+  curl -fLsSLo "$archive" "https://go.dev/dl/${download_filename}"
+  curl -fLsSLo "$metadata_file" "https://go.dev/dl/?mode=json&include=all"
+  expected="$(metadata_sha256 "$metadata_file" "$download_filename")"
   actual="$(sha256_file "$archive")"
   test "$actual" = "$expected"
   unzip -q "$archive" -d "${RUNNER_TEMP:-/tmp}"
 else
   archive="${RUNNER_TEMP:-/tmp}/go.tar.gz"
-  checksum_file="${archive}.sha256"
-  curl -fsSLo "$archive" "https://go.dev/dl/go${version}.${goos}-${goarch}.tar.gz"
-  curl -fsSLo "$checksum_file" "https://go.dev/dl/go${version}.${goos}-${goarch}.tar.gz.sha256"
-  expected="$(awk '{ print $1 }' "$checksum_file")"
+  download_filename="${download_filename}.tar.gz"
+  curl -fLsSLo "$archive" "https://go.dev/dl/${download_filename}"
+  curl -fLsSLo "$metadata_file" "https://go.dev/dl/?mode=json&include=all"
+  expected="$(metadata_sha256 "$metadata_file" "$download_filename")"
   actual="$(sha256_file "$archive")"
   test "$actual" = "$expected"
   tar -C "${RUNNER_TEMP:-/tmp}" -xzf "$archive"

@@ -9,7 +9,7 @@
 Clyde is a small Go MCP-client harness for moving auditable repository source bundles
 into Google NotebookLM.
 
-Current version: `1.0.0`
+Current version: `1.0.1`
 
 Official resources:
 
@@ -85,13 +85,13 @@ Use this procedure for every Clyde release and performance pass:
 ## Install From Source
 
 ```bash
-go install github.com/PayCal-Technologies/clyde/cmd/clyde@v1.0.0
+go install github.com/PayCal-Technologies/clyde/cmd/clyde@v1.0.1
 ```
 
 Windows from source in PowerShell:
 
 ```powershell
-go install github.com/PayCal-Technologies/clyde/cmd/clyde@v1.0.0
+go install github.com/PayCal-Technologies/clyde/cmd/clyde@v1.0.1
 clyde --about
 ```
 
