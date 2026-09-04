@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.0.2 - 2026-09-04
+
+- Fix release publication after the hardened checkout removes the Git remote.
+
 ## v1.0.1 - 2026-09-04
 
 - Fix GitHub release Go-download checksum verification using Go's official download metadata.
