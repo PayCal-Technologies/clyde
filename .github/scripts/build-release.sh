@@ -4,6 +4,8 @@ set -euo pipefail
 version="$(cat VERSION)"
 source_date_epoch="$(git log -1 --format=%ct)"
 
+.github/scripts/generate-man-page.sh --check
+
 rm -rf dist
 mkdir -p dist
 
@@ -35,7 +37,7 @@ for goos in linux darwin windows; do
       -trimpath \
       -ldflags "-s -w" \
       -o "dist/${name}/${bin}" ./cmd/clyde
-    cp README.md LICENSE VERSION "dist/${name}/"
+    cp README.md LICENSE VERSION docs/clyde.1 "dist/${name}/"
     while IFS= read -r -d '' path; do
       touch_release_tree "$path"
     done < <(find "dist/${name}" -print0)

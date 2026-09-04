@@ -96,6 +96,22 @@ clyde --about
 ```
 
 Clyde is portable Go and is intended to run on Windows, macOS, and Linux.
+
+## First Safe Run
+
+Use a released version, inspect local readiness and repository scope, prepare a
+reviewable bundle, and simulate the transfer before approving any upload:
+
+```bash
+go install github.com/PayCal-Technologies/clyde/cmd/clyde@v1.0.2
+clyde doctor .
+clyde preview .
+clyde bundle . --out .clyde/out
+clyde sync --bundle .clyde/out --notebook-id "your-notebook-id" --dry-run
+```
+
+After reviewing the bundle and its digest, run the printed approval command.
+`sync --dry-run` never uploads or deletes NotebookLM sources.
 Repository previewing, bundling, local Ollama commands, the status daemon, and
 NotebookLM sync use cross-platform Go APIs. Windows users still need local
 dependencies for the commands they run, such as Git for fast repository file
@@ -157,6 +173,11 @@ Help surfaces are designed for both humans and automation:
   homepage, help site, GitHub repository, and PayCal Technologies.
 - `clyde doctor` prints read-only environment diagnostics. Use
   `clyde doctor --json` or `clyde doctor /path/to/repo --json` for automation
+
+Unix release archives include a generated `clyde.1` manual page. The manual is
+generated from `clyde help --json`; run `man ./clyde.1` after extracting an
+archive, or regenerate the repository copy with
+`.github/scripts/generate-man-page.sh`.
   and AI-readable troubleshooting.
 
 Doctor checks:

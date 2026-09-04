@@ -45,6 +45,9 @@ jobs:
         run: go vet ./...
       - name: Build
         run: go build ./cmd/clyde
+      - name: Check generated manual page
+        shell: bash
+        run: .github/scripts/generate-man-page.sh --check
       - name: CLI smoke
         shell: bash
         run: |
